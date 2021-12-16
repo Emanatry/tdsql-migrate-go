@@ -1,0 +1,5 @@
+.vscode
+build/
+
+# 测试脚本
+run_my_db.sh
