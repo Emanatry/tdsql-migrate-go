@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/Emanatry/tdsql-migrate-go/migrator"
 	"github.com/Emanatry/tdsql-migrate-go/srcreader"
 	_ "github.com/go-sql-driver/mysql"
 )
@@ -16,13 +17,6 @@ var dstPort *int
 var dstUser *string
 var dstPassword *string
 
-//  example of parameter parse, the final binary should be able to accept specified parameters as requested
-//
-//  usage example:
-//      ./run --data_path /tmp/data --dst_ip 127.0.0.1 --dst_port 3306 --dst_user root --dst_password 123456789
-//
-//  you can test this example by:
-//  go run example.go --data_path /tmp/data --dst_ip 127.0.0.1 --dst_port 3306 --dst_user root --dst_password 123456789
 func main() {
 
 	// parse arguments
@@ -47,13 +41,13 @@ func main() {
 
 	// TODO: 一定是只有两个 source 吗？
 
-	srca, err := srcreader.Open(*dataPath + "src_a")
+	srca, err := srcreader.Open(*dataPath+"src_a", "src_a")
 	if err != nil {
 		println("failed opening source a: " + err.Error())
 		return
 	}
 
-	srcb, err := srcreader.Open(*dataPath + "src_b")
+	srcb, err := srcreader.Open(*dataPath+"src_b", "src_b")
 	if err != nil {
 		println("failed opening source b: " + err.Error())
 		return
@@ -65,7 +59,7 @@ func main() {
 	// open database connection
 	println("\n======== open database connection ========")
 
-	DSN := fmt.Sprintf("%s:%s@(%s:%d)/", *dstUser, *dstPassword, *dstIP, *dstPort)
+	DSN := fmt.Sprintf("%s:%s@(%s:%d)/?parseTime=true&loc=Local", *dstUser, *dstPassword, *dstIP, *dstPort)
 	println("DSN: " + DSN)
 
 	db, err := sql.Open("mysql", DSN)
@@ -97,6 +91,21 @@ func main() {
 	}
 
 	fmt.Printf("database stats: \n%+v\n", db.Stats())
+
+	println("\n======== migrate database ========")
+
+	// 准备迁移目标实例的环境，创建迁移过程中需要的临时表等。
+	migrator.PrepareTargetDB(db)
+
+	println("")
+
+	if err := migrator.MigrateSource(srca, db); err != nil {
+		panic(err)
+	}
+	if err := migrator.MigrateSource(srcb, db); err != nil {
+		panic(err)
+	}
+
 	rows.Close()
 
 	db.Close() // note: do not close the database after adding worker goroutines.
