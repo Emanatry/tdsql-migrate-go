@@ -81,16 +81,21 @@ func MigrateDatabase(srcdb *srcreader.SrcDatabase, db *sql.DB) error {
 	return nil
 }
 
-func generateBatchInsertStmts(dbname string, tablename string, batchSize int) string {
+func generateBatchInsertStmts(dbname string, tablename string, columnNames []string, batchSize int) string {
 	var str strings.Builder
-	str.WriteString(fmt.Sprintf("INSERT INTO `%s`.`%s` VALUES (?,?,?,?)", dbname, tablename))
+	valuesString := fmt.Sprintf("(?%s)", strings.Repeat(",?", len(columnNames)-1))
+	str.WriteString(fmt.Sprintf("INSERT INTO `%s`.`%s` VALUES %s", dbname, tablename, valuesString))
 	for i := 0; i < batchSize-1; i++ {
-		str.WriteString(",(?,?,?,?)")
+		str.WriteRune(',')
+		str.WriteString(valuesString)
 	}
-	str.WriteString(" ON DUPLICATE KEY UPDATE " +
-		"a=IF(updated_at>VALUES(updated_at),a,VALUES(a))," +
-		"b=IF(updated_at>VALUES(updated_at),b,VALUES(b))," +
-		"updated_at=IF(updated_at>VALUES(updated_at),updated_at,VALUES(updated_at))")
+	str.WriteString(" ON DUPLICATE KEY UPDATE ")
+	for i, colName := range columnNames {
+		str.WriteString(fmt.Sprintf("`%s`=IF(`updated_at`>VALUES(`updated_at`),`%s`,VALUES(`%s`))", colName, colName, colName))
+		if i != len(columnNames)-1 {
+			str.WriteRune(',')
+		}
+	}
 	str.WriteString(";")
 	return str.String()
 }
@@ -99,7 +104,7 @@ func generateBatchInsertStmts(dbname string, tablename string, batchSize int) st
 func MigrateTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB) error {
 	println("* migrate table " + tablename + " from database " + srcdb.Name + " from " + srcdb.SrcName)
 
-	// create the database and table
+	// create the database and table by importing .sql file
 	sql, err := srcdb.ReadSQL(tablename)
 	if err != nil {
 		return err
@@ -125,10 +130,28 @@ func MigrateTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB) er
 		}
 	}
 
-	// try to resume from a previous migration
+	// detect the schema of the table
+	rows, err := db.Query("SELECT `COLUMN_NAME` FROM information_schema.`COLUMNS` WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? ORDER BY `ORDINAL_POSITION`;", srcdb.Name, tablename)
+	if err != nil {
+		return fmt.Errorf("failed reading schema of %s.%s: %s", srcdb.Name, tablename, err.Error())
+	}
 
+	var columnNames []string
+
+	var columnCount int
+	for rows.Next() {
+		var columnName string
+		rows.Scan(&columnName)
+		columnNames = append(columnNames, columnName)
+		columnCount++
+	}
+	rows.Close()
+
+	fmt.Printf("columns of %s.%s: %v\n", srcdb.Name, tablename, columnNames)
+
+	// try to resume from a previous migration
 	fmt.Printf("reading migration log for source %s db %s table %s\n", srcdb.SrcName, srcdb.Name, tablename)
-	rows, err := db.Query("SELECT `seek` FROM meta_migration.migration_log WHERE dbname = ? AND tablename = ? AND src = ?;", srcdb.Name, tablename, srcdb.SrcName)
+	rows, err = db.Query("SELECT `seek` FROM meta_migration.migration_log WHERE dbname = ? AND tablename = ? AND src = ?;", srcdb.Name, tablename, srcdb.SrcName)
 
 	if err != nil {
 		return errors.New("failed reading migration log: " + err.Error())
@@ -215,7 +238,7 @@ func MigrateTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB) er
 
 		// generate the batch insert sql statement
 
-		stmt, err := tx.Prepare(generateBatchInsertStmts(srcdb.Name, tablename, BatchSize))
+		stmt, err := tx.Prepare(generateBatchInsertStmts(srcdb.Name, tablename, columnNames, BatchSize))
 		if err != nil {
 			return errors.New("failed preparing insert statement: " + err.Error())
 		}
@@ -227,7 +250,7 @@ func MigrateTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB) er
 				// table finished, part of the last batch
 
 				// prepare a shorter batch insert statement just for the last batch
-				stmt, err = tx.Prepare(generateBatchInsertStmts(srcdb.Name, tablename, rowCount))
+				stmt, err = tx.Prepare(generateBatchInsertStmts(srcdb.Name, tablename, columnNames, rowCount))
 				if err != nil {
 					return errors.New("failed preparing insert statement: " + err.Error())
 				}
