@@ -5,8 +5,11 @@
 
 克隆仓库后，运行 `git submodule update --init`，下载依赖。（评测机无公网，必须把依赖一起打包）
 
-将 `run_my_db.sh` 中的参数更改为自己的数据库实例，然后运行 `./run_my_db.sh`
-这个文件在 .gitignore 中，不会被自动上传到代码仓库里。
+创建 `./run_my_db.sh`：
+```
+go run main.go -data_path ../data/ -dst_ip <数据库公网地址.sql.tencentcdb.com> -dst_port <数据库公网端口> -dst_user <用户名> -dst_password <密码>
+```
+用于连接自己的数据库
 
 `make.sh` 和 `start.sh` 是评测环境调用的脚本，开发中用不到
 
