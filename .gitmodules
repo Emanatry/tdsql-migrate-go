@@ -1,0 +1,3 @@
+[submodule "deps/mysql"]
+	path = deps/mysql
+	url = git@github.com:/go-sql-driver/mysql
