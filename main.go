@@ -68,8 +68,8 @@ func main() {
 	}
 
 	db.SetConnMaxLifetime(time.Minute * 5)
-	db.SetMaxOpenConns(10)
-	db.SetMaxIdleConns(10)
+	db.SetMaxOpenConns(40)
+	db.SetMaxIdleConns(30)
 	db.Ping()
 
 	println("connection to database succesfully established!")
@@ -90,6 +90,8 @@ func main() {
 		println(" - " + dbname)
 	}
 
+	rows.Close()
+
 	fmt.Printf("database stats: \n%+v\n", db.Stats())
 
 	println("\n======== migrate database ========")
@@ -106,7 +108,10 @@ func main() {
 		panic(err)
 	}
 
-	rows.Close()
+	if err := migrator.PostJob(db); err != nil {
+		// panic(err)
+		println("error: " + err.Error()) // nah, just continue anyway.
+	}
 
 	db.Close() // note: do not close the database after adding worker goroutines.
 }

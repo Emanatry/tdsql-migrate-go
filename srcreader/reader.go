@@ -62,18 +62,16 @@ func Open(srcpath string, srcname string) (*Source, error) {
 	return src, nil
 }
 
-func (d *SrcDatabase) openTableRelatedFile(filename string) (*bufio.Reader, error) {
-	file, err := os.Open(d.srcdbpath + "/" + filename)
+func (d *SrcDatabase) ReadSQL(tablename string) ([]byte, error) {
+	return os.ReadFile(d.srcdbpath + "/" + tablename + ".sql")
+}
+
+func (d *SrcDatabase) OpenCSV(tablename string, seek int64) (*bufio.Reader, error) {
+	file, err := os.Open(d.srcdbpath + "/" + tablename + ".csv")
 	if err != nil {
 		return nil, err
 	}
+	file.Seek(seek, 0)
+
 	return bufio.NewReader(file), nil
-}
-
-func (d *SrcDatabase) OpenSQL(tablename string) (*bufio.Reader, error) {
-	return d.openTableRelatedFile(tablename + ".sql")
-}
-
-func (d *SrcDatabase) OpenCSV(tablename string) (*bufio.Reader, error) {
-	return d.openTableRelatedFile(tablename + ".csv")
 }
