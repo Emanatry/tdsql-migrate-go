@@ -63,7 +63,7 @@ func Open(srcpath string, srcname string) (*Source, error) {
 }
 
 func (d *SrcDatabase) ReadSQL(tablename string) ([]byte, error) {
-	return os.ReadFile(d.srcdbpath + "/" + tablename + ".sql")
+	return ioutil.ReadFile(d.srcdbpath + "/" + tablename + ".sql")
 }
 
 func (d *SrcDatabase) OpenCSV(tablename string, seek int64) (*bufio.Reader, error) {

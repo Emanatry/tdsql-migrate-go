@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
+	"io/ioutil"
 	"strings"
 	"sync"
 	"time"
@@ -19,7 +19,7 @@ const BatchSize = 3000
 func PrepareTargetDB(db *sql.DB) {
 	println("preparing target db environment")
 
-	prep, err := os.ReadFile("./sql/prepare.sql")
+	prep, err := ioutil.ReadFile("./sql/prepare.sql")
 	if err != nil {
 		panic("failed reading prepare.sql: " + err.Error())
 	}
