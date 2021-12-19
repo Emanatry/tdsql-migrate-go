@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"time"
 
 	"github.com/Emanatry/tdsql-migrate-go/migrator"
@@ -35,6 +36,22 @@ func main() {
 	fmt.Printf("dst port:%v\n", *dstPort)
 	fmt.Printf("dst user:%v\n", *dstUser)
 	fmt.Printf("dst password:%v\n", *dstPassword)
+
+	if (*dataPath)[len(*dataPath)-1:] != "/" {
+		*dataPath += "/"
+	}
+
+	var srcdirs []string
+	dir, err := ioutil.ReadDir(*dataPath)
+	if err != nil {
+		// do nothing
+	} else {
+		for _, v := range dir {
+			srcdirs = append(srcdirs, v.Name())
+		}
+	}
+
+	fmt.Printf("directories in data_path: %v", srcdirs)
 
 	// open sources
 	println("\n======== open sources ========")
