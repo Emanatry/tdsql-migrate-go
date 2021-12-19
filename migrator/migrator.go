@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Emanatry/tdsql-migrate-go/srcreader"
+	"github.com/Emanatry/tdsql-migrate-go/stats"
 )
 
 const BatchSize = 3000
@@ -287,7 +288,11 @@ func MigrateTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB) er
 
 		rowsAffected, _ := res.RowsAffected()
 
-		fmt.Printf("finished batch source %s db %s table %s, new seek = %d, rows = %d, %.2fKB/s \n", srcdb.SrcName, srcdb.Name, tablename, seek, rowsAffected, float32(seek-lastSeek)/float32(time.Since(batchStartTime).Milliseconds())*1000/1024)
+		speed := float32(seek-lastSeek) / float32(time.Since(batchStartTime).Milliseconds()) * 1000 / 1024
+		fmt.Printf("finished batch source %s db %s table %s, new seek = %d, rows = %d, %.2fKB/s \n", srcdb.SrcName, srcdb.Name, tablename, seek, rowsAffected, speed)
+
+		stats.ReportBytesMigrated(seek - lastSeek)
+
 		lastSeek = seek
 
 		if seek == -1 {

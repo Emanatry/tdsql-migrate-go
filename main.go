@@ -9,6 +9,7 @@ import (
 
 	"github.com/Emanatry/tdsql-migrate-go/migrator"
 	"github.com/Emanatry/tdsql-migrate-go/srcreader"
+	"github.com/Emanatry/tdsql-migrate-go/stats"
 	_ "github.com/go-sql-driver/mysql"
 )
 
@@ -84,9 +85,10 @@ func main() {
 		panic(err)
 	}
 
-	db.SetConnMaxLifetime(time.Minute * 5)
-	db.SetMaxOpenConns(40)
-	db.SetMaxIdleConns(30)
+	db.SetConnMaxIdleTime(-1)
+	db.SetConnMaxLifetime(-1)
+	db.SetMaxOpenConns(70)
+	db.SetMaxIdleConns(70)
 	db.Ping()
 
 	println("connection to database succesfully established!")
@@ -118,6 +120,16 @@ func main() {
 
 	println("")
 
+	var doExit bool = false
+
+	go func() {
+		for !doExit {
+			stat := db.Stats()
+			fmt.Printf("@stats: %v idle: %d, inUse: %d, open: %d, waitDuration: %ds, aggSpeed: %.2fKB/s\n", time.Now(), stat.Idle, stat.InUse, stat.OpenConnections, int(stat.WaitDuration.Seconds()), stats.CalculateAggregateSpeedSinceLast())
+			time.Sleep(5 * time.Second)
+		}
+	}()
+
 	if err := migrator.MigrateSource(srca, db); err != nil {
 		panic(err)
 	}
@@ -131,4 +143,6 @@ func main() {
 	}
 
 	db.Close() // note: do not close the database after adding worker goroutines.
+	doExit = true
+
 }
