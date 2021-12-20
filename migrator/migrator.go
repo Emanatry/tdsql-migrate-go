@@ -111,8 +111,6 @@ func MigrateTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB) er
 		return err
 	}
 
-	db.Exec(fmt.Sprintf("ALTER TABLE `%s`.`%s` ADD PRIMARY KEY (id, a, b)", srcdb.Name, tablename))
-
 	tx0, err := db.Begin()
 	if err != nil {
 		return errors.New("failed creating transaction tx0: " + err.Error())
