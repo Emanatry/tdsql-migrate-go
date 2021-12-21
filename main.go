@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io/ioutil"
+	"os"
 	"time"
 
 	"github.com/Emanatry/tdsql-migrate-go/migrator"
@@ -145,4 +146,6 @@ func main() {
 	db.Close() // note: do not close the database after adding worker goroutines.
 	doExit = true
 
+	println("all done, exiting......")
+	os.Exit(0)
 }
