@@ -172,8 +172,13 @@ func MigrateTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB) er
 		return nil
 	}
 
+	totalTableRowCount := 0
+	totalLines := 0
+	isResumed := true
+
 	if seek == -2 { // first time migrating the table
 		seek = 0
+		isResumed = false
 		fmt.Printf("* source %s db %s table %s fresh from seek %d\n", srcdb.SrcName, srcdb.Name, tablename, seek)
 		// create migration log & potentially create temp primary key
 		// primary key detection
@@ -260,6 +265,7 @@ func MigrateTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB) er
 			if err != nil {
 				return fmt.Errorf("failed reading csv from seek pos %d: %s", seek, err.Error())
 			}
+			totalLines++
 			data := strings.Split(string(line), ",")
 			batchData = append(batchData, data[0])
 			batchData = append(batchData, data[1])
@@ -289,6 +295,7 @@ func MigrateTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB) er
 		speed := float32(seek-lastSeek) / float32(time.Since(batchStartTime).Milliseconds()) * 1000 / 1024
 		fmt.Printf("batchok %s %s.%s, new seek = %d, rows = %d, %.2fKB/s (%.2fs)\n", srcdb.SrcName, srcdb.Name, tablename, seek, rowsAffected, speed, time.Since(batchStartTime).Seconds())
 
+		totalTableRowCount += int(rowsAffected)
 		stats.ReportBytesMigrated(seek - lastSeek)
 
 		lastSeek = seek
@@ -298,7 +305,7 @@ func MigrateTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB) er
 		}
 	}
 
-	fmt.Printf("* finished table source %s db %s table %s\n", srcdb.SrcName, srcdb.Name, tablename)
+	fmt.Printf("* finished table source %s db %s table %s, totalRowAffected %d, csvlines: %d (resumed: %v)\n", srcdb.SrcName, srcdb.Name, tablename, totalTableRowCount, totalLines, isResumed)
 
 	return nil
 }
