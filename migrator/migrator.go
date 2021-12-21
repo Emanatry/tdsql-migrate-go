@@ -287,7 +287,7 @@ func MigrateTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB) er
 		rowsAffected, _ := res.RowsAffected()
 
 		speed := float32(seek-lastSeek) / float32(time.Since(batchStartTime).Milliseconds()) * 1000 / 1024
-		fmt.Printf("batchok %s %s.%s, new seek = %d, rows = %d, %.2fKB/s \n", srcdb.SrcName, srcdb.Name, tablename, seek, rowsAffected, speed)
+		fmt.Printf("batchok %s %s.%s, new seek = %d, rows = %d, %.2fKB/s (%.2fs)\n", srcdb.SrcName, srcdb.Name, tablename, seek, rowsAffected, speed, time.Since(batchStartTime).Seconds())
 
 		stats.ReportBytesMigrated(seek - lastSeek)
 

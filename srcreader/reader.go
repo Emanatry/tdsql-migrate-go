@@ -71,7 +71,9 @@ func (d *SrcDatabase) OpenCSV(tablename string, seek int64) (*bufio.Reader, erro
 	if err != nil {
 		return nil, err
 	}
-	file.Seek(seek, 0)
+	if seek != 0 {
+		file.Seek(seek, 0)
+	}
 
 	return bufio.NewReader(file), nil
 }
