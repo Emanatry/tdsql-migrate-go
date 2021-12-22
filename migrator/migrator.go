@@ -122,6 +122,8 @@ func MigrateTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB) er
 		string(sql),
 	}
 
+	fmt.Printf("=== %s %s.%s's table creation sql:\n%s\n=== end table creation sql\n\n", srcdb.SrcName, srcdb.Name, tablename, sql)
+
 	for _, stmt := range prepStmts {
 		_, err = tx0.Exec(stmt)
 		if err != nil {
@@ -185,7 +187,7 @@ func MigrateTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB) er
 		/*
 			> 如果有主键或者非空唯一索引，唯一索引相同的情况下，以行updated_at时间戳来判断是否覆盖数据，如果updated_at比原来的数据更新，那么覆盖数据；否则忽略数据。不存在主键相同，updated_at时间戳相同，但数据不同的情况。
 			> 如果没有主键或者非空唯一索引，如果除updated_at其他数据都一样，只更新updated_at字段；否则，插入一条新的数据。
-			第二种情况，通过添加一个临时主键，转换为第一种。
+			第二种情况，通过添加一个包括所有数据列，但不包括 updated_at 的临时主键，转换为第一种。
 		*/
 		tx0, err := db.Begin()
 		if err != nil {
@@ -201,9 +203,16 @@ func MigrateTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB) er
 			hasIndex = true
 		}
 		indres.Close()
-		if !hasIndex { // add a temporary primary key for deduplication if no pre-existing primary key was found
-			fmt.Printf("* %s.%s doesn't have a primary key, creating one (id, a, b) for deduplication purposes\n", srcdb.Name, tablename)
-			_, err = tx0.Query(fmt.Sprintf("ALTER TABLE `%s`.`%s` ADD PRIMARY KEY (id, a, b);", srcdb.Name, tablename))
+		var columnNamesMinusUpdatedAt []string
+		for _, v := range columnNames {
+			if v != "updated_at" {
+				columnNamesMinusUpdatedAt = append(columnNamesMinusUpdatedAt, v)
+			}
+		}
+		keyColumnsStr := strings.Join(columnNamesMinusUpdatedAt, ", ")
+		if !hasIndex { // add a temporary primary key of all columns deduplication if no pre-existing primary key was found
+			fmt.Printf("* %s.%s doesn't have a primary key, creating one (%s) for deduplication purposes\n", srcdb.Name, tablename, keyColumnsStr)
+			_, err = tx0.Query(fmt.Sprintf("ALTER TABLE `%s`.`%s` ADD PRIMARY KEY (%s);", srcdb.Name, tablename, keyColumnsStr))
 			if err != nil {
 				return errors.New("failed adding temp primary key: " + err.Error())
 			}
