@@ -139,12 +139,10 @@ func MigrateTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB) er
 
 	var columnNames []string
 
-	var columnCount int
 	for rows.Next() {
 		var columnName string
 		rows.Scan(&columnName)
 		columnNames = append(columnNames, columnName)
-		columnCount++
 	}
 	rows.Close()
 
@@ -276,10 +274,9 @@ func MigrateTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB) er
 			}
 			totalLines++
 			data := strings.Split(string(line), ",")
-			batchData = append(batchData, data[0])
-			batchData = append(batchData, data[1])
-			batchData = append(batchData, data[2])
-			batchData = append(batchData, data[3])
+			for i := 0; i < len(columnNames); i++ {
+				batchData = append(batchData, data[i])
+			}
 			seek += len(line)
 		}
 
