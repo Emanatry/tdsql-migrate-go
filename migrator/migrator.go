@@ -149,7 +149,7 @@ func MigrateTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB) er
 	fmt.Printf("columns of %s.%s: %v\n", srcdb.Name, tablename, columnNames)
 
 	// try to resume from a previous migration
-	fmt.Printf("reading migration log for source %s db %s table %s\n", srcdb.SrcName, srcdb.Name, tablename)
+	fmt.Printf("reading migration log for %s %s.%s\n", srcdb.SrcName, srcdb.Name, tablename)
 	rows, err = db.Query("SELECT `seek` FROM meta_migration.migration_log WHERE dbname = ? AND tablename = ? AND src = ?;", srcdb.Name, tablename, srcdb.SrcName)
 
 	if err != nil {
@@ -163,12 +163,12 @@ func MigrateTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB) er
 		if err != nil {
 			return err
 		}
-		fmt.Printf("* source %s db %s table %s resuming from seek %d\n", srcdb.SrcName, srcdb.Name, tablename, seek)
+		fmt.Printf("* resuming %s %s.%s from seek %d\n", srcdb.SrcName, srcdb.Name, tablename, seek)
 	}
 	rows.Close()
 
 	if seek == -1 {
-		fmt.Printf("* source %s db %s table %s already finished.\n", srcdb.SrcName, srcdb.Name, tablename)
+		fmt.Printf("* %s %s.%s already finished.\n", srcdb.SrcName, srcdb.Name, tablename)
 		return nil
 	}
 
@@ -179,7 +179,7 @@ func MigrateTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB) er
 	if seek == -2 { // first time migrating the table
 		seek = 0
 		isResumed = false
-		fmt.Printf("* source %s db %s table %s fresh from seek %d\n", srcdb.SrcName, srcdb.Name, tablename, seek)
+		fmt.Printf("* fresh start %s %s.%s from seek %d\n", srcdb.SrcName, srcdb.Name, tablename, seek)
 		// create migration log & potentially create temp primary key
 		// primary key detection
 		/*
@@ -202,7 +202,7 @@ func MigrateTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB) er
 		}
 		indres.Close()
 		if !hasIndex { // add a temporary primary key for deduplication if no pre-existing primary key was found
-			fmt.Printf("* `%s`.`%s` doesn't have a primary key, creating one (id, a, b) for deduplication purposes\n", srcdb.Name, tablename)
+			fmt.Printf("* %s.%s doesn't have a primary key, creating one (id, a, b) for deduplication purposes\n", srcdb.Name, tablename)
 			_, err = tx0.Query(fmt.Sprintf("ALTER TABLE `%s`.`%s` ADD PRIMARY KEY (id, a, b);", srcdb.Name, tablename))
 			if err != nil {
 				return errors.New("failed adding temp primary key: " + err.Error())
@@ -276,13 +276,13 @@ func MigrateTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB) er
 
 		res, err := stmt.Exec(batchData...) // insert one batch of data
 		if err != nil {
-			return fmt.Errorf("failed exec batch seek %d source %s db %s table %s: %s", seek, srcdb.SrcName, srcdb.Name, tablename, err.Error())
+			return fmt.Errorf("failed exec batch seek %d source %s %s.%s: %s", seek, srcdb.SrcName, srcdb.Name, tablename, err.Error())
 		}
 
 		// update migration log at the end of the transaction
 		_, err = tx.Query("UPDATE meta_migration.migration_log SET seek = ? WHERE dbname = ? AND tablename = ? AND src = ?;", seek, srcdb.Name, tablename, srcdb.SrcName)
 		if err != nil {
-			return fmt.Errorf("failed updating migration log for source %s db %s table %s, new seek = %d: %s", srcdb.SrcName, srcdb.Name, tablename, seek, err.Error())
+			return fmt.Errorf("failed updating migration log for source %s %s.%s, new seek = %d: %s", srcdb.SrcName, srcdb.Name, tablename, seek, err.Error())
 		}
 
 		err = tx.Commit()
