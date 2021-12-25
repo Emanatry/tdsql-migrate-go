@@ -66,7 +66,7 @@ func Open(srcpath string, srcname string) (*Source, error) {
 func (d *SrcDatabase) ReadSQL(tablename string) ([]byte, error) {
 	// NOTE: a dirty hack to convert the ordinary key of table 4 into a primary key.
 	var oldkeystr = []byte("\n  KEY (`")
-	var newkeystr = []byte("\n-- NOTE: key converted into primary key while migrating\n  PRIMARY KEY (`")
+	var newkeystr = []byte("\n-- NOTE: key converted into unique key while migrating\n  UNIQUE KEY (`")
 	sqlcontent, err := ioutil.ReadFile(d.srcdbpath + "/" + tablename + ".sql")
 	if err != nil {
 		return sqlcontent, err
