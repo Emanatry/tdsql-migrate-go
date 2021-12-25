@@ -2,6 +2,7 @@ package srcreader
 
 import (
 	"bufio"
+	"bytes"
 	"io/ioutil"
 	"os"
 )
@@ -63,7 +64,14 @@ func Open(srcpath string, srcname string) (*Source, error) {
 }
 
 func (d *SrcDatabase) ReadSQL(tablename string) ([]byte, error) {
-	return ioutil.ReadFile(d.srcdbpath + "/" + tablename + ".sql")
+	// NOTE: a dirty hack to convert the ordinary key of table 4 into a primary key.
+	var oldkeystr = []byte("\n  KEY (`")
+	var newkeystr = []byte("\n-- NOTE: key converted into primary key while migrating\n  PRIMARY KEY (`")
+	sqlcontent, err := ioutil.ReadFile(d.srcdbpath + "/" + tablename + ".sql")
+	if err != nil {
+		return sqlcontent, err
+	}
+	return bytes.ReplaceAll(sqlcontent, oldkeystr, newkeystr), nil
 }
 
 func (d *SrcDatabase) OpenCSV(tablename string, seek int64) (*bufio.Reader, error) {
