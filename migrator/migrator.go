@@ -92,7 +92,7 @@ func generateBatchInsertStmts(dbname string, tablename string, columnNames []str
 	}
 	str.WriteString(" ON DUPLICATE KEY UPDATE ")
 	for i, colName := range columnNames {
-		str.WriteString(fmt.Sprintf("`%s`=IF(`updated_at`>VALUES(`updated_at`),`%s`,VALUES(`%s`))", colName, colName, colName))
+		str.WriteString(fmt.Sprintf("`%s`=IF(`updated_at`>=VALUES(`updated_at`),`%s`,VALUES(`%s`))", colName, colName, colName))
 		if i != len(columnNames)-1 {
 			str.WriteRune(',')
 		}
