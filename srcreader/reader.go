@@ -2,7 +2,6 @@ package srcreader
 
 import (
 	"bufio"
-	"bytes"
 	"io/ioutil"
 	"os"
 )
@@ -63,19 +62,12 @@ func Open(srcpath string, srcname string) (*Source, error) {
 	return src, nil
 }
 
-func (d *SrcDatabase) ReadSQL(tablename string) (sqlContent []byte, isOrdinaryKey bool, err error) {
-	// TODO: this is a dirty way to check for a ordinary key! this is NOT robust.
-	// this only detects (unreliably) if any ordinary key exists on the table,
-	// and does not account for the case where two indecies exists on the same table,
-	// with one being PRIMARY/UNIQUE and the other being ordinary key.
-	var ordikeystr = []byte("\n  KEY (`")
-
+func (d *SrcDatabase) ReadSQL(tablename string) (sqlContent []byte, err error) {
 	sqlContent, err = ioutil.ReadFile(d.srcdbpath + "/" + tablename + ".sql")
 	if err != nil {
 		return
 	}
 
-	isOrdinaryKey = bytes.Contains(sqlContent, ordikeystr)
 	return
 }
 

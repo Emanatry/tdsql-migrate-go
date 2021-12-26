@@ -138,6 +138,11 @@ func main() {
 		panic(err)
 	}
 
+	// for migrating a single table:
+	// if err := migrator.MigrateTable(&srcb.Databases[0], "4", db); err != nil {
+	// 	panic(err)
+	// }
+
 	if err := migrator.PostJob(db); err != nil {
 		// panic(err)
 		println("error: " + err.Error()) // nah, just continue anyway.

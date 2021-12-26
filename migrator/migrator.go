@@ -106,7 +106,7 @@ func MigrateTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB) er
 	println("* migrate table " + tablename + " from database " + srcdb.Name + " from " + srcdb.SrcName)
 
 	// create the database and table by importing .sql file
-	sql, isOrdinaryKey, err := srcdb.ReadSQL(tablename)
+	sql, err := srcdb.ReadSQL(tablename)
 
 	if err != nil {
 		return err
@@ -188,20 +188,42 @@ func MigrateTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB) er
 			> 如果没有主键或者非空唯一索引，如果除updated_at其他数据都一样，只更新updated_at字段；否则，插入一条新的数据。
 			第二种情况，通过添加一个包括所有数据列，但不包括 updated_at 的临时主键，转换为第一种。
 		*/
+
+		hasUniqueIndex := false
+
 		tx0, err := db.Begin()
 		if err != nil {
 			return errors.New("failed creating tx0 when creating migration log: " + err.Error())
 		}
 
 		indres, err := tx0.Query(fmt.Sprintf("SHOW INDEXES IN `%s`.`%s`;", srcdb.Name, tablename))
+
 		if err != nil {
 			return errors.New("failed reading primary key: " + err.Error())
 		}
-		hasIndex := false
+		cols, err := indres.Columns()
+		if err != nil {
+			panic(err)
+		}
+		dest := make([]interface{}, len(cols)) // A temporary interface{} slice
+		var discardedBytes []byte
+		nonUnique := true
+		for i := range dest {
+			dest[i] = &discardedBytes
+		}
+		dest[1] = &nonUnique
 		for indres.Next() {
-			hasIndex = true
+			err = indres.Scan(dest...)
+			if err != nil {
+				return errors.New("failed to scan while showing index: " + err.Error())
+			}
+			if !nonUnique {
+				hasUniqueIndex = true
+				break
+			}
 		}
 		indres.Close()
+
 		var columnNamesMinusUpdatedAt []string
 		for _, v := range columnNames {
 			if v != "updated_at" {
@@ -209,18 +231,20 @@ func MigrateTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB) er
 			}
 		}
 		keyColumnsStr := strings.Join(columnNamesMinusUpdatedAt, ", ")
-		shouldAddTempKey := !hasIndex || isOrdinaryKey
-		if shouldAddTempKey { // add a temporary primary key of all columns for deduplication if no pre-existing primary key was found
-			fmt.Printf("* %s.%s doesn't have a primary key, creating one (%s) for deduplication purposes\n", srcdb.Name, tablename, keyColumnsStr)
+		if !hasUniqueIndex { // add a temporary primary key of all columns for deduplication if no pre-existing unique key was found
+			fmt.Printf("* %s.%s doesn't have a unique key, creating one (%s) for deduplication purposes\n", srcdb.Name, tablename, keyColumnsStr)
 			_, err = tx0.Exec(fmt.Sprintf("ALTER TABLE `%s`.`%s` ADD PRIMARY KEY (%s);", srcdb.Name, tablename, keyColumnsStr))
 			if err != nil {
 				return errors.New("failed adding temp primary key: " + err.Error())
 			}
+		} else {
+			fmt.Printf("* %s.%s has unique key.\n", srcdb.Name, tablename)
 		}
+
 		if err != nil {
 			return errors.New("failed creating trasaction for creating migration log: " + err.Error())
 		}
-		_, err = tx0.Exec("INSERT INTO meta_migration.migration_log VALUES(?, ?, ?, 0, ?) ON DUPLICATE KEY UPDATE seek = 0;", srcdb.Name, tablename, srcdb.SrcName, shouldAddTempKey)
+		_, err = tx0.Exec("INSERT INTO meta_migration.migration_log VALUES(?, ?, ?, 0, ?) ON DUPLICATE KEY UPDATE seek = 0;", srcdb.Name, tablename, srcdb.SrcName, !hasUniqueIndex)
 		if err != nil {
 			return errors.New("failed creating migration log: " + err.Error())
 		}
