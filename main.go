@@ -88,8 +88,8 @@ func main() {
 
 	db.SetConnMaxIdleTime(-1)
 	db.SetConnMaxLifetime(-1)
-	db.SetMaxOpenConns(70)
-	db.SetMaxIdleConns(70)
+	db.SetMaxOpenConns(100)
+	db.SetMaxIdleConns(100)
 	db.Ping()
 
 	println("connection to database succesfully established!")

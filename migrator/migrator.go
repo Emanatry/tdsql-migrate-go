@@ -212,7 +212,7 @@ func MigrateTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB) er
 		shouldAddTempKey := !hasIndex || isOrdinaryKey
 		if shouldAddTempKey { // add a temporary primary key of all columns for deduplication if no pre-existing primary key was found
 			fmt.Printf("* %s.%s doesn't have a primary key, creating one (%s) for deduplication purposes\n", srcdb.Name, tablename, keyColumnsStr)
-			_, err = tx0.Query(fmt.Sprintf("ALTER TABLE `%s`.`%s` ADD PRIMARY KEY (%s);", srcdb.Name, tablename, keyColumnsStr))
+			_, err = tx0.Exec(fmt.Sprintf("ALTER TABLE `%s`.`%s` ADD PRIMARY KEY (%s);", srcdb.Name, tablename, keyColumnsStr))
 			if err != nil {
 				return errors.New("failed adding temp primary key: " + err.Error())
 			}
@@ -220,7 +220,7 @@ func MigrateTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB) er
 		if err != nil {
 			return errors.New("failed creating trasaction for creating migration log: " + err.Error())
 		}
-		_, err = tx0.Query("INSERT INTO meta_migration.migration_log VALUES(?, ?, ?, 0, ?) ON DUPLICATE KEY UPDATE seek = 0;", srcdb.Name, tablename, srcdb.SrcName, shouldAddTempKey)
+		_, err = tx0.Exec("INSERT INTO meta_migration.migration_log VALUES(?, ?, ?, 0, ?) ON DUPLICATE KEY UPDATE seek = 0;", srcdb.Name, tablename, srcdb.SrcName, shouldAddTempKey)
 		if err != nil {
 			return errors.New("failed creating migration log: " + err.Error())
 		}
@@ -288,7 +288,7 @@ func MigrateTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB) er
 		}
 
 		// update migration log at the end of the transaction
-		_, err = tx.Query("UPDATE meta_migration.migration_log SET seek = ? WHERE dbname = ? AND tablename = ? AND src = ?;", seek, srcdb.Name, tablename, srcdb.SrcName)
+		_, err = tx.Exec("UPDATE meta_migration.migration_log SET seek = ? WHERE dbname = ? AND tablename = ? AND src = ?;", seek, srcdb.Name, tablename, srcdb.SrcName)
 		if err != nil {
 			return fmt.Errorf("failed updating migration log for source %s %s.%s, new seek = %d: %s", srcdb.SrcName, srcdb.Name, tablename, seek, err.Error())
 		}
@@ -345,13 +345,16 @@ func PostJob(db *sql.DB) error {
 	for i, dbname := range dbnames {
 		tablename := tablenames[i]
 		fmt.Printf("* removing temp_prikey of %s.%s from migration_log\n", dbname, tablename)
-		_, err = db.Query("UPDATE meta_migration.migration_log SET temp_prikey = 0 WHERE dbname = ? AND tablename = ?;", dbname, tablename)
+		_, err = db.Exec("UPDATE meta_migration.migration_log SET temp_prikey = 0 WHERE dbname = ? AND tablename = ?;", dbname, tablename)
 		if err != nil {
 			return fmt.Errorf("postjob failed updating migration log for %s.%s after removing temp_prikey: %s", dbname, tablename, err.Error())
 		}
 	}
 
-	tx0.Commit()
+	err = tx0.Commit()
+	if err != nil {
+		return err
+	}
 
 	// DDL statement triggers a implicit commit, so should do it after updating meta_migration
 	// HOWEVER, bad thing could happen if the program is stopped right now, and might result in extra primary keys not being deleted.
@@ -363,7 +366,7 @@ func PostJob(db *sql.DB) error {
 	for i, dbname := range dbnames {
 		tablename := tablenames[i]
 		fmt.Printf("* removing temp prikey from %s.%s\n", dbname, tablename)
-		_, err = db.Query(fmt.Sprintf("ALTER TABLE `%s`.`%s` DROP PRIMARY KEY;", dbname, tablename))
+		_, err = db.Exec(fmt.Sprintf("ALTER TABLE `%s`.`%s` DROP PRIMARY KEY;", dbname, tablename))
 		if err != nil {
 			// return fmt.Errorf("postjob failed dropping temp primary key for %s.%s: %s", dbname, tablename, err.Error())
 			fmt.Printf("error: postjob failed dropping temp primary key for %s.%s: %s\n", dbname, tablename, err.Error())
