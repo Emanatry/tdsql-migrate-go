@@ -63,15 +63,20 @@ func Open(srcpath string, srcname string) (*Source, error) {
 	return src, nil
 }
 
-func (d *SrcDatabase) ReadSQL(tablename string) ([]byte, error) {
-	// NOTE: a dirty hack to convert the ordinary key of table 4 into a primary key.
-	var oldkeystr = []byte("\n  KEY (`")
-	var newkeystr = []byte("\n-- NOTE: key converted into unique key while migrating\n  UNIQUE KEY (`")
-	sqlcontent, err := ioutil.ReadFile(d.srcdbpath + "/" + tablename + ".sql")
+func (d *SrcDatabase) ReadSQL(tablename string) (sqlContent []byte, isOrdinaryKey bool, err error) {
+	// TODO: this is a dirty way to check for a ordinary key! this is NOT robust.
+	// this only detects (unreliably) if any ordinary key exists on the table,
+	// and does not account for the case where two indecies exists on the same table,
+	// with one being PRIMARY/UNIQUE and the other being ordinary key.
+	var ordikeystr = []byte("\n  KEY (`")
+
+	sqlContent, err = ioutil.ReadFile(d.srcdbpath + "/" + tablename + ".sql")
 	if err != nil {
-		return sqlcontent, err
+		return
 	}
-	return bytes.ReplaceAll(sqlcontent, oldkeystr, newkeystr), nil
+
+	isOrdinaryKey = bytes.Contains(sqlContent, ordikeystr)
+	return
 }
 
 func (d *SrcDatabase) OpenCSV(tablename string, seek int64) (*bufio.Reader, error) {

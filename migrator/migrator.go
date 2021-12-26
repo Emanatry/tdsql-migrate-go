@@ -106,7 +106,8 @@ func MigrateTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB) er
 	println("* migrate table " + tablename + " from database " + srcdb.Name + " from " + srcdb.SrcName)
 
 	// create the database and table by importing .sql file
-	sql, err := srcdb.ReadSQL(tablename)
+	sql, isOrdinaryKey, err := srcdb.ReadSQL(tablename)
+
 	if err != nil {
 		return err
 	}
@@ -208,7 +209,8 @@ func MigrateTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB) er
 			}
 		}
 		keyColumnsStr := strings.Join(columnNamesMinusUpdatedAt, ", ")
-		if !hasIndex { // add a temporary primary key of all columns deduplication if no pre-existing primary key was found
+		shouldAddTempKey := !hasIndex || isOrdinaryKey
+		if shouldAddTempKey { // add a temporary primary key of all columns for deduplication if no pre-existing primary key was found
 			fmt.Printf("* %s.%s doesn't have a primary key, creating one (%s) for deduplication purposes\n", srcdb.Name, tablename, keyColumnsStr)
 			_, err = tx0.Query(fmt.Sprintf("ALTER TABLE `%s`.`%s` ADD PRIMARY KEY (%s);", srcdb.Name, tablename, keyColumnsStr))
 			if err != nil {
@@ -218,7 +220,7 @@ func MigrateTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB) er
 		if err != nil {
 			return errors.New("failed creating trasaction for creating migration log: " + err.Error())
 		}
-		_, err = tx0.Query("INSERT INTO meta_migration.migration_log VALUES(?, ?, ?, 0, ?) ON DUPLICATE KEY UPDATE seek = 0;", srcdb.Name, tablename, srcdb.SrcName, !hasIndex)
+		_, err = tx0.Query("INSERT INTO meta_migration.migration_log VALUES(?, ?, ?, 0, ?) ON DUPLICATE KEY UPDATE seek = 0;", srcdb.Name, tablename, srcdb.SrcName, shouldAddTempKey)
 		if err != nil {
 			return errors.New("failed creating migration log: " + err.Error())
 		}
