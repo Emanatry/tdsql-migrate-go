@@ -54,6 +54,7 @@ func PrepareTargetDB(db *sql.DB) {
 }
 
 // migrate a whole data source
+// every database of a source is a thread.
 func MigrateSource(src *srcreader.Source, db *sql.DB) error {
 	println("========== starting migration job for source " + src.SrcName)
 	var wg sync.WaitGroup
