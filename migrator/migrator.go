@@ -207,17 +207,24 @@ func MigrateTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB) er
 		}
 		dest := make([]interface{}, len(cols)) // A temporary interface{} slice
 		var discardedBytes []byte
-		nonUnique := true
+		var nonUnique bool = true
+		var keyName string
+
 		for i := range dest {
 			dest[i] = &discardedBytes
+			if cols[i] == "Key_name" {
+				dest[i] = &keyName
+			} else if cols[i] == "Non_unique" {
+				dest[i] = &nonUnique
+			}
 		}
-		dest[1] = &nonUnique
 		for indres.Next() {
 			err = indres.Scan(dest...)
 			if err != nil {
 				return errors.New("failed to scan while showing index: " + err.Error())
 			}
 			if !nonUnique {
+				fmt.Printf("found unique index for %s.%s: %s\n", srcdb.Name, tablename, keyName)
 				hasUniqueIndex = true
 				break
 			}
