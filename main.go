@@ -124,9 +124,16 @@ func main() {
 	var doExit bool = false
 
 	go func() {
+		var lastIdle, lastTotal uint64
 		for !doExit {
+			idle, total := stats.GetCPUSample() // only works on linux
 			stat := db.Stats()
-			fmt.Printf("@stats: %v idle: %d, inUse: %d, open: %d, waitDuration: %ds, aggSpeed: %.2fKB/s\n", time.Now(), stat.Idle, stat.InUse, stat.OpenConnections, int(stat.WaitDuration.Seconds()), stats.CalculateAggregateSpeedSinceLast())
+			fmt.Printf("@stats: %v idle: %d, inUse: %d, open: %d, waitDuration: %ds, aggSpeed: %.2fKB/s, cpu: %.2f%%\n",
+				time.Now(), stat.Idle, stat.InUse, stat.OpenConnections, int(stat.WaitDuration.Seconds()), stats.CalculateAggregateSpeedSinceLast(),
+				(1-float64(idle-lastIdle)/float64(total-lastTotal))*100)
+
+			lastIdle = idle
+			lastTotal = total
 			time.Sleep(5 * time.Second)
 		}
 	}()
