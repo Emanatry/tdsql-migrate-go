@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
-	"sync"
 	"time"
 
 	"github.com/Emanatry/tdsql-migrate-go/migrator"
@@ -89,7 +88,7 @@ func main() {
 
 	db.SetConnMaxIdleTime(-1)
 	db.SetConnMaxLifetime(-1)
-	db.SetMaxOpenConns(140)
+	db.SetMaxOpenConns(100)
 	db.SetMaxIdleConns(100)
 	db.Ping()
 
@@ -139,23 +138,12 @@ func main() {
 		}
 	}()
 
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		if err := migrator.MigrateSource(srca, db); err != nil {
-			panic(err)
-		}
-		defer wg.Done()
-	}()
-	wg.Add(1)
-	go func() {
-		if err := migrator.MigrateSource(srcb, db); err != nil {
-			panic(err)
-		}
-		defer wg.Done()
-	}()
-
-	wg.Wait()
+	if err := migrator.MigrateSource(srca, db); err != nil {
+		panic(err)
+	}
+	if err := migrator.MigrateSource(srcb, db); err != nil {
+		panic(err)
+	}
 
 	// for migrating a single table:
 	// if err := migrator.MigrateTable(&srcb.Databases[0], "4", db); err != nil {
