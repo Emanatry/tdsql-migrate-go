@@ -143,10 +143,11 @@ func main() {
 	// 	panic(err)
 	// }
 
-	if err := migrator.PostJob(db); err != nil {
-		// panic(err)
-		println("error: " + err.Error()) // nah, just continue anyway.
-	}
+	// Note: disabled to save some time in the competition.
+	// if err := migrator.PostJob(db); err != nil {
+	// 	// panic(err)
+	// 	println("error: " + err.Error()) // nah, just continue anyway.
+	// }
 
 	db.Close() // note: do not close the database after adding worker goroutines.
 	doExit = true

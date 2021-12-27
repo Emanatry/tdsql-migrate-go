@@ -14,7 +14,7 @@ import (
 	"github.com/Emanatry/tdsql-migrate-go/stats"
 )
 
-const BatchSize = 3000
+const BatchSize = 4000
 
 // prepare the target instance, create `meta_migration`, etc.
 func PrepareTargetDB(db *sql.DB) {
