@@ -1,0 +1,11 @@
+version: '3'
+services:
+  db:
+    image: mysql:8.0
+    container_name: tdsqlcomp-testenv
+    environment:
+      MYSQL_ROOT_PASSWORD: root-0h-mai-g0d-conta1neraizeision-yis-gr8t
+      MYSQL_DATABASE: testdb
+      TZ: "Asia/Shanghai"
+    ports:
+      - "33330:3306"
