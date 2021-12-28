@@ -4,3 +4,6 @@ run
 
 # 测试脚本
 run_my_db.sh
+
+# 提交包标签
+label.txt

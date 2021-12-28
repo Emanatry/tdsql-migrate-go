@@ -21,6 +21,11 @@ var dstUser *string
 var dstPassword *string
 
 func main() {
+	// for distinguishing between different builds and logs
+	label, err := os.ReadFile("./label.txt")
+	if err == nil {
+		fmt.Printf("======LABEL OF THIS BUILD======\n%s===============================\n", string(label))
+	}
 
 	// parse arguments
 	println("\n======== parse arguments ========")
