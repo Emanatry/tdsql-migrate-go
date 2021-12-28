@@ -7,3 +7,6 @@ run_my_db.sh
 
 # 提交包标签
 label.txt
+
+# 标记是否正在迁移中
+migration_inprogress.txt

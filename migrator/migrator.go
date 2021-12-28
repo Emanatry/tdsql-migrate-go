@@ -408,3 +408,15 @@ func PostJob(db *sql.DB) error {
 	println("* postjob finished")
 	return nil
 }
+
+func PostJobDropMetaMigration(db *sql.DB) error {
+	println("* postjob started drop meta_migration")
+
+	_, err := db.Exec("DROP DATABASE meta_migration;")
+	if err != nil {
+		return err
+	}
+
+	println("* postjob drop meta_migration finished")
+	return nil
+}

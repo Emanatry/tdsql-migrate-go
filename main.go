@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"errors"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -22,7 +23,7 @@ var dstPassword *string
 
 func main() {
 	// for distinguishing between different builds and logs
-	label, err := os.ReadFile("./label.txt")
+	label, err := ioutil.ReadFile("./label.txt")
 	if err == nil {
 		fmt.Printf("======LABEL OF THIS BUILD======\n%s===============================\n", string(label))
 	}
@@ -121,6 +122,22 @@ func main() {
 
 	println("\n======== migrate database ========")
 
+	// workaround for a judge env bug where not all tables from a previous migration attempt is dropped
+	if _, err := os.Stat("./migration_inprogress.txt"); errors.Is(err, os.ErrNotExist) {
+		f, err := os.Create("./migration_inprogress.txt")
+		if err != nil {
+			panic(fmt.Sprintf("failed creating migration_inprogress.txt: %s\n", err))
+		}
+		f.Write([]byte(time.Now().String()))
+		err = migrator.PostJobDropMetaMigration(db)
+		if err != nil {
+			fmt.Printf("failed dropping meta_migration: %s\n", err.Error())
+		}
+		f.Close()
+	} else {
+		fmt.Printf("migration_inprogress.txt exists.\n")
+	}
+
 	// 准备迁移目标实例的环境，创建迁移过程中需要的临时表等。
 	migrator.PrepareTargetDB(db)
 
@@ -165,5 +182,6 @@ func main() {
 	doExit = true
 
 	println("all done, exiting......")
+	os.Remove("./migration_inprogress.txt")
 	os.Exit(0)
 }
