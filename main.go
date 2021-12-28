@@ -78,7 +78,7 @@ func main() {
 	// open database connection
 	println("\n======== open database connection ========")
 
-	DSN := fmt.Sprintf("%s:%s@(%s:%d)/?parseTime=true&loc=Local", *dstUser, *dstPassword, *dstIP, *dstPort)
+	DSN := fmt.Sprintf("%s:%s@(%s:%d)/?parseTime=true&loc=Local&autocommit=false", *dstUser, *dstPassword, *dstIP, *dstPort)
 	println("DSN: " + DSN)
 
 	db, err := sql.Open("mysql", DSN)
