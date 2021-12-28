@@ -35,6 +35,10 @@ func PrepareTargetDB(db *sql.DB) {
 	}
 
 	for _, v := range stmts {
+		// skip empty lines
+		if len(strings.TrimSpace(v)) == 0 {
+			continue
+		}
 		result, err := tx.Exec(v + ";")
 		if err != nil {
 			panic("failed executing prepare.sql: " + err.Error())
@@ -105,8 +109,8 @@ func generateBatchInsertStmts(dbname string, tablename string, columnNames []str
 func MigrateTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB) error {
 	println("* migrate table " + tablename + " from database " + srcdb.Name + " from " + srcdb.SrcName)
 
-	// create the database and table by importing .sql file
-	sql, err := srcdb.ReadSQL(tablename)
+	// create the database and table by importing .sqlfile file
+	sqlfile, err := srcdb.ReadSQL(tablename)
 
 	if err != nil {
 		return err
@@ -120,10 +124,10 @@ func MigrateTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB) er
 	prepStmts := []string{
 		fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`;", srcdb.Name),
 		fmt.Sprintf("USE `%s`;", srcdb.Name),
-		string(sql),
+		string(sqlfile),
 	}
 
-	fmt.Printf("=== %s %s.%s's table creation sql:\n%s\n=== end table creation sql\n\n", srcdb.SrcName, srcdb.Name, tablename, sql)
+	fmt.Printf("=== %s %s.%s's table creation sql:\n%s\n=== end table creation sql\n\n", srcdb.SrcName, srcdb.Name, tablename, sqlfile)
 
 	for _, stmt := range prepStmts {
 		_, err = tx0.Exec(stmt)
@@ -271,6 +275,9 @@ func MigrateTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB) er
 
 	lastSeek := seek
 
+	// sql statement in string form for a full BatchSize batch insert.
+	fullBatchInsertSqlStmtsStr := generateBatchInsertStmts(srcdb.Name, tablename, columnNames, BatchSize)
+
 	// batch insert
 	for {
 		batchStartTime := time.Now()
@@ -281,12 +288,8 @@ func MigrateTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB) er
 		}
 
 		// generate the batch insert sql statement
-
-		stmt, err := tx.Prepare(generateBatchInsertStmts(srcdb.Name, tablename, columnNames, BatchSize))
-		if err != nil {
-			return errors.New("failed preparing insert statement: " + err.Error())
-		}
-
+		var stmt *sql.Stmt
+		isFullBatch := true
 		var batchData []interface{}
 		for rowCount := 0; rowCount < BatchSize; rowCount++ {
 			line, err := csv.ReadBytes('\n')
@@ -299,6 +302,7 @@ func MigrateTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB) er
 					return errors.New("failed preparing insert statement: " + err.Error())
 				}
 
+				isFullBatch = false
 				seek = -1
 				break
 			}
@@ -313,10 +317,18 @@ func MigrateTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB) er
 			seek += len(line)
 		}
 
+		if isFullBatch {
+			stmt, err = tx.Prepare(fullBatchInsertSqlStmtsStr)
+			if err != nil {
+				return errors.New("failed preparing insert statement: " + err.Error())
+			}
+		}
+
 		res, err := stmt.Exec(batchData...) // insert one batch of data
 		if err != nil {
 			return fmt.Errorf("failed exec batch seek %d source %s %s.%s: %s", seek, srcdb.SrcName, srcdb.Name, tablename, err.Error())
 		}
+		stmt.Close()
 
 		// update migration log at the end of the transaction
 		_, err = tx.Exec("UPDATE meta_migration.migration_log SET seek = ? WHERE dbname = ? AND tablename = ? AND src = ?;", seek, srcdb.Name, tablename, srcdb.SrcName)
