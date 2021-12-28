@@ -129,8 +129,7 @@ func main() {
 			panic(fmt.Sprintf("failed creating migration_inprogress.txt: %s\n", err))
 		}
 		f.Write([]byte(time.Now().String()))
-		err = migrator.PostJobDropMetaMigration(db)
-		if err != nil {
+		if err = migrator.PostJobDropMetaMigration(db); err != nil {
 			fmt.Printf("failed dropping meta_migration: %s\n", err.Error())
 		}
 		f.Close()
@@ -180,6 +179,10 @@ func main() {
 
 	db.Close() // note: do not close the database after adding worker goroutines.
 	doExit = true
+
+	if err := migrator.PostJobDropMetaMigration(db); err != nil {
+		fmt.Printf("failed dropping meta migration: %s\n", err.Error())
+	}
 
 	println("all done, exiting......")
 	os.Remove("./migration_inprogress.txt")
