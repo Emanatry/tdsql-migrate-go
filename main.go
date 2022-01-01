@@ -120,6 +120,15 @@ func main() {
 
 	fmt.Printf("database stats: \n%+v\n", db.Stats())
 
+	var doExit *bool = stats.StartStatsReportingGoroutine(db)
+	println("\n======== presort sources ========")
+	if err := srca.PresortDatabase(); err != nil {
+		panic(err)
+	}
+	if err := srcb.PresortDatabase(); err != nil {
+		panic(err)
+	}
+
 	println("\n======== migrate database ========")
 
 	// workaround for a judge env bug where not all tables from a previous migration attempt is dropped
@@ -140,25 +149,6 @@ func main() {
 	// 准备迁移目标实例的环境，创建迁移过程中需要的临时表等。
 	migrator.PrepareTargetDB(db)
 
-	println("")
-
-	var doExit bool = false
-
-	go func() {
-		var lastIdle, lastTotal uint64
-		for !doExit {
-			idle, total := stats.GetCPUSample() // only works on linux
-			stat := db.Stats()
-			fmt.Printf("@stats: %v idle: %d, inUse: %d, open: %d, waitDuration: %ds, aggSpeed: %.2fKB/s, cpu: %.2f%%\n",
-				time.Now(), stat.Idle, stat.InUse, stat.OpenConnections, int(stat.WaitDuration.Seconds()), stats.CalculateAggregateSpeedSinceLast(),
-				(1-float64(idle-lastIdle)/float64(total-lastTotal))*100)
-
-			lastIdle = idle
-			lastTotal = total
-			time.Sleep(5 * time.Second)
-		}
-	}()
-
 	if err := migrator.MigrateSource(srca, db); err != nil {
 		panic(err)
 	}
@@ -178,7 +168,7 @@ func main() {
 	// }
 
 	db.Close() // note: do not close the database after adding worker goroutines.
-	doExit = true
+	*doExit = true
 
 	if err := migrator.PostJobDropMetaMigration(db); err != nil {
 		fmt.Printf("failed dropping meta migration: %s\n", err.Error())

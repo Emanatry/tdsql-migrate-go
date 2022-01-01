@@ -1,11 +1,14 @@
 package stats
 
 import (
+	"database/sql"
 	"fmt"
 	"io/ioutil"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -58,4 +61,32 @@ func GetCPUSample() (idle, total uint64) {
 		}
 	}
 	return
+}
+
+func StartStatsReportingGoroutine(db *sql.DB) *bool {
+	var doExit bool = false
+	go func() {
+		var lastIdle, lastTotal uint64
+		for !doExit {
+			idle, total := GetCPUSample() // only works on linux
+			stat := db.Stats()
+			var m runtime.MemStats
+			runtime.ReadMemStats(&m)
+
+			in := &syscall.Sysinfo_t{}
+			syscall.Sysinfo(in)
+			fmt.Printf("@stats: %v idle: %d, inUse: %d, open: %d, waitDuration: %ds, aggSpeed: %.2fKB/s, cpu: %.2f%%, heap: %dMB, memFree: %dMB, swapFree: %dMB\n",
+				time.Now(), stat.Idle, stat.InUse, stat.OpenConnections, int(stat.WaitDuration.Seconds()), CalculateAggregateSpeedSinceLast(),
+				(1-float64(idle-lastIdle)/float64(total-lastTotal))*100,
+				m.HeapAlloc/1024/1024,
+				uint64(in.Freeram)*uint64(in.Unit)/1024/1024,
+				uint64(in.Freeswap)*uint64(in.Unit)/1024/1024,
+			)
+
+			lastIdle = idle
+			lastTotal = total
+			time.Sleep(5 * time.Second)
+		}
+	}()
+	return &doExit
 }
