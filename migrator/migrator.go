@@ -193,69 +193,66 @@ func MigrateTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB) er
 			第二种情况，通过添加一个包括所有数据列，但不包括 updated_at 的临时主键，转换为第一种。
 		*/
 
-		hasUniqueIndex := false
-
 		tx0, err := db.Begin()
 		if err != nil {
 			return errors.New("failed creating tx0 when creating migration log: " + err.Error())
 		}
 
-		indres, err := tx0.Query(fmt.Sprintf("SHOW INDEXES IN `%s`.`%s`;", srcdb.Name, tablename))
+		// indres, err := tx0.Query(fmt.Sprintf("SHOW INDEXES IN `%s`.`%s`;", srcdb.Name, tablename))
 
-		if err != nil {
-			return errors.New("failed reading primary key: " + err.Error())
-		}
-		cols, err := indres.Columns()
-		if err != nil {
-			panic(err)
-		}
-		dest := make([]interface{}, len(cols)) // A temporary interface{} slice
-		var discardedBytes []byte
-		var nonUnique bool = true
-		var keyName string
+		// if err != nil {
+		// 	return errors.New("failed reading primary key: " + err.Error())
+		// }
+		// cols, err := indres.Columns()
+		// if err != nil {
+		// 	panic(err)
+		// }
+		// dest := make([]interface{}, len(cols)) // A temporary interface{} slice
+		// var discardedBytes []byte
+		// var nonUnique bool = true
+		// var keyName string
 
-		for i := range dest {
-			dest[i] = &discardedBytes
-			if cols[i] == "Key_name" {
-				dest[i] = &keyName
-			} else if cols[i] == "Non_unique" {
-				dest[i] = &nonUnique
-			}
-		}
-		for indres.Next() {
-			err = indres.Scan(dest...)
-			if err != nil {
-				return errors.New("failed to scan while showing index: " + err.Error())
-			}
-			if !nonUnique {
-				fmt.Printf("found unique index for %s.%s: %s\n", srcdb.Name, tablename, keyName)
-				hasUniqueIndex = true
-				break
-			}
-		}
-		indres.Close()
+		// hasUniqueIndex := false
 
-		var columnNamesMinusUpdatedAt []string
-		for _, v := range columnNames {
-			if v != "updated_at" {
-				columnNamesMinusUpdatedAt = append(columnNamesMinusUpdatedAt, v)
-			}
-		}
-		keyColumnsStr := strings.Join(columnNamesMinusUpdatedAt, ", ")
-		if !hasUniqueIndex { // add a temporary primary key of all columns for deduplication if no pre-existing unique key was found
-			fmt.Printf("* %s.%s doesn't have a unique key, creating one (%s) for deduplication purposes\n", srcdb.Name, tablename, keyColumnsStr)
-			_, err = tx0.Exec(fmt.Sprintf("ALTER TABLE `%s`.`%s` ADD PRIMARY KEY (%s);", srcdb.Name, tablename, keyColumnsStr))
-			if err != nil {
-				return errors.New("failed adding temp primary key: " + err.Error())
-			}
-		} else {
-			fmt.Printf("* %s.%s has unique key.\n", srcdb.Name, tablename)
-		}
+		// for i := range dest {
+		// 	dest[i] = &discardedBytes
+		// 	if cols[i] == "Key_name" {
+		// 		dest[i] = &keyName
+		// 	} else if cols[i] == "Non_unique" {
+		// 		dest[i] = &nonUnique
+		// 	}
+		// }
+		// for indres.Next() {
+		// 	err = indres.Scan(dest...)
+		// 	if err != nil {
+		// 		return errors.New("failed to scan while showing index: " + err.Error())
+		// 	}
+		// 	if !nonUnique {
+		// 		fmt.Printf("found unique index for %s.%s: %s\n", srcdb.Name, tablename, keyName)
+		// 		hasUniqueIndex = true
+		// 		break
+		// 	}
+		// }
+		// indres.Close()
 
-		if err != nil {
-			return errors.New("failed creating trasaction for creating migration log: " + err.Error())
-		}
-		_, err = tx0.Exec("INSERT INTO meta_migration.migration_log VALUES(?, ?, ?, 0, ?) ON DUPLICATE KEY UPDATE seek = 0;", srcdb.Name, tablename, srcdb.SrcName, !hasUniqueIndex)
+		// var columnNamesMinusUpdatedAt []string
+		// for _, v := range columnNames {
+		// 	if v != "updated_at" {
+		// 		columnNamesMinusUpdatedAt = append(columnNamesMinusUpdatedAt, v)
+		// 	}
+		// }
+		// keyColumnsStr := strings.Join(columnNamesMinusUpdatedAt, ", ")
+		// if !hasUniqueIndex { // add a temporary primary key of all columns for deduplication if no pre-existing unique key was found
+		// 	fmt.Printf("* %s.%s doesn't have a unique key, creating one (%s) for deduplication purposes\n", srcdb.Name, tablename, keyColumnsStr)
+		// 	_, err = tx0.Exec(fmt.Sprintf("ALTER TABLE `%s`.`%s` ADD PRIMARY KEY (%s);", srcdb.Name, tablename, keyColumnsStr))
+		// 	if err != nil {
+		// 		return errors.New("failed adding temp primary key: " + err.Error())
+		// 	}
+		// } else {
+		// 	fmt.Printf("* %s.%s has unique key.\n", srcdb.Name, tablename)
+		// }
+
+		_, err = tx0.Exec("INSERT INTO meta_migration.migration_log VALUES(?, ?, ?, 0, ?) ON DUPLICATE KEY UPDATE seek = 0;", srcdb.Name, tablename, srcdb.SrcName, 0 /* !hasUniqueIndex */)
 		if err != nil {
 			return errors.New("failed creating migration log: " + err.Error())
 		}
