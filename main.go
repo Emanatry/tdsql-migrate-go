@@ -64,8 +64,6 @@ func main() {
 	// open sources
 	println("\n======== open sources ========")
 
-	// TODO: 一定是只有两个 source 吗？
-
 	srca, err := srcreader.Open(*dataPath+"src_a", "src_a")
 	if err != nil {
 		println("failed opening source a: " + err.Error())
@@ -129,6 +127,18 @@ func main() {
 		panic(err)
 	}
 
+	println("\n======== merge sources ========")
+
+	if err := srcreader.MergeSortedSource(srca, srcb); err != nil {
+		panic(err)
+	}
+
+	merged_src, err := srcreader.Open(srcreader.PRESORT_PATH+"merged", "src_merged")
+	if err != nil {
+		println("failed opening merged source: " + err.Error())
+		return
+	}
+
 	println("\n======== migrate database ========")
 
 	// workaround for a judge env bug where not all tables from a previous migration attempt is dropped
@@ -149,12 +159,16 @@ func main() {
 	// 准备迁移目标实例的环境，创建迁移过程中需要的临时表等。
 	migrator.PrepareTargetDB(db)
 
-	if err := migrator.MigrateSource(srca, db); err != nil {
+	if err := migrator.MigrateSource(merged_src, db); err != nil {
 		panic(err)
 	}
-	if err := migrator.MigrateSource(srcb, db); err != nil {
-		panic(err)
-	}
+
+	// if err := migrator.MigrateSource(srca, db); err != nil {
+	// 	panic(err)
+	// }
+	// if err := migrator.MigrateSource(srcb, db); err != nil {
+	// 	panic(err)
+	// }
 
 	// for migrating a single table:
 	// if err := migrator.MigrateTable(&srcb.Databases[0], "4", db); err != nil {
@@ -167,12 +181,12 @@ func main() {
 	// 	println("error: " + err.Error()) // nah, just continue anyway.
 	// }
 
-	db.Close() // note: do not close the database after adding worker goroutines.
-	*doExit = true
-
 	if err := migrator.PostJobDropMetaMigration(db); err != nil {
 		fmt.Printf("failed dropping meta migration: %s\n", err.Error())
 	}
+
+	db.Close() // note: do not close the database after adding worker goroutines.
+	*doExit = true
 
 	println("all done, exiting......")
 	os.Remove("./migration_inprogress.txt")
