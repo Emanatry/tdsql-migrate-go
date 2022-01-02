@@ -1,11 +1,9 @@
 package stats
 
 import (
-	"bufio"
 	"database/sql"
 	"fmt"
 	"io/ioutil"
-	"os/exec"
 	"runtime"
 	"strconv"
 	"strings"
@@ -64,36 +62,19 @@ func GetCPUSample() (idle, total uint64) {
 	return
 }
 
-// returns memFree, memAvail, swapFree, swapTotal in MB
-func getMemStats() (int, int, int, int) {
-	cmd := exec.Command("free", "--mega")
-	stdout, err := cmd.StdoutPipe()
+// returns memFree, memAvail, swapFree, swapTotal in kB
+func getMemStats() (total int, free int, available int) {
+	meminfo, err := ioutil.ReadFile("/proc/meminfo")
+	total = -1
+	free = -1
+	available = -1
 	if err != nil {
-		fmt.Println("failed redirecting output of free: " + err.Error())
-		return -1, -1, -1, -1
+		fmt.Println("failed reading /proc/meminfo: " + err.Error())
+		return
 	}
 
-	cmd.Start()
-
-	r := bufio.NewReader(stdout)
-	r.ReadLine() // skip first line
-	lineBA, _, err := r.ReadLine()
-	if err != nil {
-		fmt.Println("failed reading output of free: " + err.Error())
-		return -1, -1, -1, -1
-	}
-	var free, available, discarded, swap, totalswap int
-	fmt.Sscanf(string(lineBA), "Mem: %d %d %d %d %d %d", &discarded, &discarded, &free, &discarded, &discarded, &available)
-	lineBA, _, err = r.ReadLine()
-	if err != nil {
-		fmt.Println("failed reading output of free: " + err.Error())
-		return -1, -1, -1, -1
-	}
-	fmt.Sscanf(string(lineBA), "Swap: %d %d %d", &totalswap, &discarded, &swap)
-
-	stdout.Close()
-	cmd.Wait()
-	return free, available, swap, totalswap
+	fmt.Sscanf(string(meminfo), "MemTotal: %d kB\nMemFree: %d kB\nMemAvailable: %d kB", &total, &free, &available)
+	return
 }
 
 func StartStatsReportingGoroutine(db *sql.DB) *bool {
@@ -106,14 +87,13 @@ func StartStatsReportingGoroutine(db *sql.DB) *bool {
 			var m runtime.MemStats
 			runtime.ReadMemStats(&m)
 
-			free, available, swap, _ := getMemStats()
-			fmt.Printf("@stats: %v, idle: %d, inUse: %d, open: %d, waitDuration(s): %d, aggSpeed(KB/s): %.2f, cpu(%%): %.2f, heap(MB): %d, memFree(MB): %d, memAvail(MB): %d, swapFree(MB): %d\n",
+			_, free, available := getMemStats()
+			fmt.Printf("@stats: %v, idle: %d, inUse: %d, open: %d, waitDuration(s): %d, aggSpeed(KB/s): %.2f, cpu(%%): %.2f, heap(MB): %d, memFree(MB): %d, memAvail(MB): %d\n",
 				time.Now().Format(time.RFC3339), stat.Idle, stat.InUse, stat.OpenConnections, int(stat.WaitDuration.Seconds()), CalculateAggregateSpeedSinceLast(),
 				(1-float64(idle-lastIdle)/float64(total-lastTotal))*100,
 				m.HeapAlloc/1024/1024,
-				free,
-				available,
-				swap, // actual judge env appears to have no swap, so this is always 0
+				free/1204,
+				available/1024,
 			)
 
 			lastIdle = idle
