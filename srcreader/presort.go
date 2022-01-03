@@ -17,20 +17,23 @@ const MERGER_PROGRAM = "./presort/merge"
 const CONCURRENT_PRESORT_JOB = 3
 const CONCURRENT_MERGE_JOB = 3
 
-func (d *SrcDatabase) determinePKColumnCount(table string) (int, error) {
+func (d *SrcDatabase) determinePKColumnType(table string) (string, error) {
 	sql, err := d.ReadSQL(table)
 	if err != nil {
-		return -1, err
+		return "", err
 	}
 	sqlstr := string(sql)
 	// dirty but works
 	if strings.Contains(sqlstr, "PRIMARY KEY (`id`)") {
-		return 1, nil
+		return "id", nil
 	}
 	if strings.Contains(sqlstr, "PRIMARY KEY (`id`,`a`)") {
-		return 2, nil
+		return "id_a", nil
 	}
-	return 3, nil
+	if strings.Contains(sqlstr, "KEY (`id`,`b`)") {
+		return "id_b_a", nil
+	}
+	return "id_a_b", nil
 }
 
 func (db *SrcDatabase) getPresortMarkFile(table string) string {
@@ -48,17 +51,6 @@ func (d *SrcDatabase) IsTablePresorted(table string) bool {
 		}
 	}
 	return false
-}
-
-func pkColumnCountToArg(cnt int) string {
-	switch cnt {
-	case 1:
-		return "id"
-	case 2:
-		return "id_a"
-	default:
-		return "id_a_b"
-	}
 }
 
 func (s *Source) PresortDatabase() error {
@@ -85,13 +77,13 @@ func (s *Source) PresortDatabase() error {
 				rateLimitSem.Acquire() // rate limit
 				defer rateLimitSem.Release()
 
-				colcnt, err := db.determinePKColumnCount(table)
+				coltype, err := db.determinePKColumnType(table)
 				if err != nil {
 					panic(err)
 				}
-				fmt.Printf("@ presorting %s %s.%s (%s)\n", s.SrcName, db.Name, table, pkColumnCountToArg(colcnt))
+				fmt.Printf("@ presorting %s %s.%s (%s)\n", s.SrcName, db.Name, table, coltype)
 				// presort files by running c++ sorting program
-				cmd := exec.Command(SORTER_PROGRAM, db.srcdbpath+"/"+table+".csv", db.getPresortOutputFile(table), pkColumnCountToArg(colcnt))
+				cmd := exec.Command(SORTER_PROGRAM, db.srcdbpath+"/"+table+".csv", db.getPresortOutputFile(table), coltype)
 				err = cmd.Run()
 				if err != nil {
 					panic(err)
@@ -140,11 +132,11 @@ func MergeSortedSource(a *Source, b *Source) error {
 				rateLimitSem.Acquire()
 				defer rateLimitSem.Release()
 
-				colcnt, err := dba.determinePKColumnCount(table)
+				coltype, err := dba.determinePKColumnType(table)
 				if err != nil {
 					panic(err)
 				}
-				fmt.Printf("@ merging %s.%s (%s)\n", dba.Name, table, pkColumnCountToArg(colcnt))
+				fmt.Printf("@ merging %s.%s (%s)\n", dba.Name, table, coltype)
 				sql, err := dba.ReadSQL(table)
 				if err != nil {
 					panic(err)
@@ -153,7 +145,7 @@ func MergeSortedSource(a *Source, b *Source) error {
 				if err != nil {
 					panic(err)
 				}
-				cmd := exec.Command(MERGER_PROGRAM, dba.getPresortOutputFile(table), dbb.getPresortOutputFile(table), dbroot+"/"+table+".csv", pkColumnCountToArg(colcnt))
+				cmd := exec.Command(MERGER_PROGRAM, dba.getPresortOutputFile(table), dbb.getPresortOutputFile(table), dbroot+"/"+table+".csv", coltype)
 				stdout, err := cmd.StdoutPipe()
 				if err != nil {
 					panic(err)

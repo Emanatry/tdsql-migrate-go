@@ -4,6 +4,7 @@
 
 bool dual_column_pk = false;
 bool triple_column_pk = false;
+bool id_b_a_pk = false;
 
 #define MAXROWS 3340000 // slightly bigger than the actual data set
 
@@ -18,6 +19,10 @@ bool comp(const dat &a, const dat &b) {
 			int cmpres = strcmp(COL(a.data, 1), COL(b.data, 1)); // compare `a`
 			if(cmpres != 0) return cmpres < 0;
 			return strcmp(COL(a.data, 2), COL(b.data, 2)) < 0; // compare `b`
+		} else if (id_b_a_pk) {
+			int cmpres = strcmp(COL(a.data, 2), COL(b.data, 2)); // compare `b`
+			if(cmpres != 0) return cmpres < 0;
+			return strcmp(COL(a.data, 1), COL(b.data, 1)) < 0; // compare `a`
 		}
 	}
 	return a.key < b.key;
@@ -25,13 +30,14 @@ bool comp(const dat &a, const dat &b) {
 
 int main(int argc, char** argv) {
 	if(argc < 4) {
-		printf("usage: ./%s input.csv output.csv <id|id_a|id_a_b>\n", argv[0]);
+		printf("usage: ./%s input.csv output.csv <id|id_a|id_a_b|id_b_a>\n", argv[0]);
 		return 1;
 	}
 	char *inputFile = argv[1];
 	char *outputFile = argv[2];
 	dual_column_pk = strcmp(argv[3], "id_a") == 0;
 	triple_column_pk = strcmp(argv[3], "id_a_b") == 0;
+	id_b_a_pk = strcmp(argv[3], "id_b_a") == 0;
 
 	FILE *r = fopen(inputFile, "r");
 	FILE *f = fopen(outputFile, "w");

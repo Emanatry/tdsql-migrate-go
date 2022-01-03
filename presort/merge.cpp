@@ -2,6 +2,7 @@
 
 bool dual_column_pk = false;
 bool triple_column_pk = false;
+bool id_b_a_pk = false;
 
 // compare PK of two records, negative if a<b, 0 if a=b, positive if a>b
 int comparePK(const dat &a, const dat &b) {
@@ -12,6 +13,10 @@ int comparePK(const dat &a, const dat &b) {
 			int cmpres = strcmp(COL(a.data, 1), COL(b.data, 1)); // compare `a`
 			if(cmpres != 0) return cmpres;
 			return strcmp(COL(a.data, 2), COL(b.data, 2)); // compare `b`
+		} else if (id_b_a_pk) {
+			int cmpres = strcmp(COL(a.data, 2), COL(b.data, 2)); // compare `b`
+			if(cmpres != 0) return cmpres;
+			return strcmp(COL(a.data, 1), COL(b.data, 1)); // compare `a`
 		} else {
 			return 0;
 		}
@@ -49,7 +54,7 @@ void commit(FILE *f, const dat &buf) {
 
 int main(int argc, char** argv) {
 	if(argc < 5) {
-		printf("usage: ./%s input1.csv input2.csv output.csv <id|id_a|id_a_b>\n", argv[0]);
+		printf("usage: ./%s input1.csv input2.csv output.csv <id|id_a|id_a_b|id_b_a>\n", argv[0]);
 		return 1;
 	}
 	char *inputFile1 = argv[1];
@@ -57,6 +62,7 @@ int main(int argc, char** argv) {
 	char *outputFile = argv[3];
 	dual_column_pk = strcmp(argv[4], "id_a") == 0;
 	triple_column_pk = strcmp(argv[4], "id_a_b") == 0;
+	id_b_a_pk = strcmp(argv[4], "id_b_a") == 0;
 
 	FILE *r1 = fopen(inputFile1, "r");
 	FILE *r2 = fopen(inputFile2, "r");
