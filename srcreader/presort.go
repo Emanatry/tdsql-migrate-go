@@ -7,13 +7,16 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+
+	"github.com/Emanatry/tdsql-migrate-go/semaphore"
 )
 
 const PRESORT_PATH = "./presort/data/"
 const SORTER_PROGRAM = "./presort/sortdata"
 const MERGER_PROGRAM = "./presort/merge"
-const CONCURRENT_PRESORT_JOB = 3
-const CONCURRENT_MERGE_JOB = 3
+
+// limit the total amout of concurrent presort job to avoid OOM.
+const CONCURRENT_PRESORT_JOB = 7
 
 func (d *SrcDatabase) determinePKColumnType(table string) (string, error) {
 	sql, err := d.ReadSQL(table)
@@ -60,11 +63,16 @@ func (db *SrcDatabase) getTableIndex(table string) int {
 	return -1
 }
 
+var rateLimitSem = semaphore.New(CONCURRENT_PRESORT_JOB)
+
 func (db *SrcDatabase) PresortTable(table string) error {
 	tableIndex := db.getTableIndex(table)
 
 	db.presortLock[tableIndex].Lock()
 	defer db.presortLock[tableIndex].Unlock()
+
+	rateLimitSem.Acquire()
+	defer rateLimitSem.Release()
 
 	if db.tablePresorted[tableIndex] {
 		return nil

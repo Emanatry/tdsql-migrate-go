@@ -74,10 +74,33 @@ func MigrateSource(srca *srcreader.Source, srcb *srcreader.Source, db *sql.DB, n
 // migrate one database of a data source
 func MigrateDatabase(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, db *sql.DB, nodup bool) error {
 	println("======= migrate database [" + srcdba.Name + "]")
-	for _, table := range srcdba.Tables {
+	c := make(chan error)
+	migrate := func(table string) {
 		if err := MigrateTable(srcdba, srcdbb, table, db, nodup); err != nil {
-			return fmt.Errorf("error while migrating table [%s]:\n%s", table, err)
+			c <- fmt.Errorf("error while migrating table [%s]:\n%s", table, err)
 		}
+		c <- nil
+	}
+	// migrate two tables concurrently
+	go migrate(srcdba.Tables[0])
+	go migrate(srcdba.Tables[1])
+	err := <-c
+	if err != nil {
+		return err
+	}
+	go migrate(srcdba.Tables[2])
+	err = <-c
+	if err != nil {
+		return err
+	}
+	go migrate(srcdba.Tables[3])
+	err = <-c
+	if err != nil {
+		return err
+	}
+	err = <-c
+	if err != nil {
+		return err
 	}
 	return nil
 }
