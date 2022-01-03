@@ -266,10 +266,12 @@ func MigrateTable(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, 
 		if seek == -1 {
 			if temporarilySuppressKeyIdB { // add back KEY(`id`,`b`)
 				fmt.Printf("* adding back temporarilySuppressKeyIdB for %s.%s\n", srcdba.Name, tablename)
+				t1 := time.Now()
 				_, err = db.Exec(fmt.Sprintf("ALTER TABLE `%s`.`%s` ADD INDEX (`id`,`b`);", srcdba.Name, tablename))
 				if err != nil {
 					return errors.New("failed adding back KEY(`id`,`b`): " + err.Error())
 				}
+				fmt.Printf("* rebuilt key id_b for %s.%s in %.1f secs.\n", srcdba.Name, tablename, time.Since(t1).Seconds())
 			}
 			break
 		}
