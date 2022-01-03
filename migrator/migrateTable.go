@@ -36,7 +36,11 @@ func generateBatchInsertStmts(dbname string, tablename string, columnNames []str
 // migrate one table from a source database
 // nodup: true if the data source has already been deduped and there's no need to do that while migrating.
 func MigrateTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB, nodup bool) error {
-	println("* migrate table " + tablename + " from database " + srcdb.Name + " from " + srcdb.SrcName)
+	nodupStr := ""
+	if nodup {
+		nodupStr = "nodup"
+	}
+	println("* migrate " + nodupStr + " table " + tablename + " from database " + srcdb.Name + " from " + srcdb.SrcName)
 
 	// create the database and table by importing .sqlfile file
 	sqlfile, err := srcdb.ReadSQL(tablename)
@@ -90,15 +94,6 @@ func MigrateTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB, no
 		return errors.New("failed reading migration log: " + err.Error())
 	}
 
-	if !nodup { // if source data hasn't been deduped locally
-		/*
-			> 如果有主键或者非空唯一索引，唯一索引相同的情况下，以行updated_at时间戳来判断是否覆盖数据，如果updated_at比原来的数据更新，那么覆盖数据；否则忽略数据。不存在主键相同，updated_at时间戳相同，但数据不同的情况。
-			> 如果没有主键或者非空唯一索引，如果除updated_at其他数据都一样，只更新updated_at字段；否则，插入一条新的数据。
-			第二种情况，通过添加一个包括所有数据列，但不包括 updated_at 的临时主键，转换为第一种。
-		*/
-		checkAndCreatePKForDedup(tx0, srcdb, tablename, columnNames)
-	}
-
 	var seek int = -2
 
 	for rows.Next() {
@@ -133,6 +128,15 @@ func MigrateTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB, no
 		_, err = tx0.Exec("INSERT INTO meta_migration.migration_log VALUES(?, ?, ?, 0, ?) ON DUPLICATE KEY UPDATE seek = 0;", srcdb.Name, tablename, srcdb.SrcName, 0 /* !hasUniqueIndex */)
 		if err != nil {
 			return errors.New("failed creating migration log: " + err.Error())
+		}
+
+		if !nodup { // if source data hasn't been deduped locally
+			/*
+				> 如果有主键或者非空唯一索引，唯一索引相同的情况下，以行updated_at时间戳来判断是否覆盖数据，如果updated_at比原来的数据更新，那么覆盖数据；否则忽略数据。不存在主键相同，updated_at时间戳相同，但数据不同的情况。
+				> 如果没有主键或者非空唯一索引，如果除updated_at其他数据都一样，只更新updated_at字段；否则，插入一条新的数据。
+				第二种情况，通过添加一个包括所有数据列，但不包括 updated_at 的临时主键，转换为第一种。
+			*/
+			checkAndCreatePKForDedup(tx0, srcdb, tablename, columnNames)
 		}
 
 		// commit change to migration log
