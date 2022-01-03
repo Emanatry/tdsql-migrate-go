@@ -100,7 +100,7 @@ func MergeSortedTable(dba *SrcDatabase, dbb *SrcDatabase, table string) (csvpath
 	}
 	markfile := dbroot + "/" + table + ".mark"
 	if doFileExists(markfile) {
-		return "", err
+		return mergeOutputFile, err
 	}
 
 	coltype, err := dba.determinePKColumnType(table)
