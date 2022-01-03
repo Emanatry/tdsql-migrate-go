@@ -159,23 +159,24 @@ func main() {
 	// 准备迁移目标实例的环境，创建迁移过程中需要的临时表等。
 	migrator.PrepareTargetDB(db)
 
-	if err := migrator.MigrateSource(merged_src, db); err != nil {
+	if err := migrator.MigrateSource(merged_src, db, true); err != nil {
 		panic(err)
 	}
 
-	// if err := migrator.MigrateSource(srca, db); err != nil {
+	// ==== for migrating without local dedup:
+	// if err := migrator.MigrateSource(srca, db, false); err != nil {
 	// 	panic(err)
 	// }
-	// if err := migrator.MigrateSource(srcb, db); err != nil {
-	// 	panic(err)
-	// }
-
-	// for migrating a single table:
-	// if err := migrator.MigrateTable(&srcb.Databases[0], "4", db); err != nil {
+	// if err := migrator.MigrateSource(srcb, db, false); err != nil {
 	// 	panic(err)
 	// }
 
-	// Note: disabled to save some time in the competition.
+	// ==== for migrating a single table:
+	// if err := migrator.MigrateTable(&srcb.Databases[0], "4", db, false); err != nil {
+	// 	panic(err)
+	// }
+
+	// ==== Note: disabled postjob to save some time in the competition.
 	// if err := migrator.PostJob(db); err != nil {
 	// 	// panic(err)
 	// 	println("error: " + err.Error()) // nah, just continue anyway.
@@ -185,7 +186,7 @@ func main() {
 		fmt.Printf("failed dropping meta migration: %s\n", err.Error())
 	}
 
-	db.Close() // note: do not close the database after adding worker goroutines.
+	db.Close()
 	*doExit = true
 
 	println("all done, exiting......")
