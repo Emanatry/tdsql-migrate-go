@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 )
 
 const PRESORT_PATH = "./presort/data/"
@@ -60,12 +61,17 @@ func (db *SrcDatabase) getTableIndex(table string) int {
 }
 
 func (db *SrcDatabase) PresortTable(table string) error {
+	tableIndex := db.getTableIndex(table)
+
+	db.presortLock[tableIndex].Lock()
+	defer db.presortLock[tableIndex].Unlock()
+
+	if db.tablePresorted[tableIndex] {
+		return nil
+	}
 	err := os.MkdirAll(PRESORT_PATH+db.SrcName+"/"+db.Name, 0755)
 	if err != nil {
 		return err
-	}
-	if db.tablePresorted[db.getTableIndex(table)] {
-		return nil
 	}
 
 	coltype, err := db.determinePKColumnType(table)
@@ -87,13 +93,26 @@ func (db *SrcDatabase) PresortTable(table string) error {
 	}
 	f.Close()
 
-	db.tablePresorted[db.getTableIndex(table)] = true
+	db.tablePresorted[tableIndex] = true
 	return nil
 }
+
+var mergeMutexMap = make(map[string]*sync.Mutex)
+var mutexMapLock sync.Mutex
 
 func MergeSortedTable(dba *SrcDatabase, dbb *SrcDatabase, table string) (csvpath string, err error) {
 	dbroot := PRESORT_PATH + "merged" + "/" + dba.Name
 	mergeOutputFile := dbroot + "/" + table + ".csv"
+
+	mutexMapLock.Lock()
+	if mergeMutexMap[mergeOutputFile] == nil {
+		mergeMutexMap[mergeOutputFile] = &sync.Mutex{}
+	}
+	mutexMapLock.Unlock()
+
+	mergeMutexMap[mergeOutputFile].Lock()
+	defer mergeMutexMap[mergeOutputFile].Unlock()
+
 	err = os.MkdirAll(dbroot, 0755)
 	if err != nil {
 		return "", err
@@ -139,4 +158,29 @@ func MergeSortedTable(dba *SrcDatabase, dbb *SrcDatabase, table string) (csvpath
 	}
 	f.Close()
 	return mergeOutputFile, err
+}
+
+func StartBackgoundPresortMerge(srca *Source, srcb *Source) {
+	go func() {
+		sortAndMergeTable := func(table string) {
+			for i, dba := range srca.Databases {
+				dbb := srcb.Databases[i]
+				err := dba.PresortTable(table)
+				if err != nil {
+					panic(err)
+				}
+				err = dbb.PresortTable(table)
+				if err != nil {
+					panic(err)
+				}
+				_, err = MergeSortedTable(dba, dbb, table)
+				if err != nil {
+					panic(err)
+				}
+			}
+		}
+		sortAndMergeTable("2")
+		sortAndMergeTable("3")
+		sortAndMergeTable("4")
+	}()
 }

@@ -141,6 +141,9 @@ func main() {
 	// 准备迁移目标实例的环境，创建迁移过程中需要的临时表等。
 	migrator.PrepareTargetDB(db)
 
+	println("\n======== starting backgound presort & merge ========")
+	srcreader.StartBackgoundPresortMerge(srca, srcb)
+
 	if err := migrator.MigrateSource(srca, srcb, db, true); err != nil {
 		panic(err)
 	}

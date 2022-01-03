@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io/ioutil"
 	"os"
+	"sync"
 )
 
 type Source struct {
@@ -16,6 +17,7 @@ type Source struct {
 type SrcDatabase struct {
 	srcdbpath      string
 	tablePresorted []bool
+	presortLock    []sync.Mutex
 
 	SrcName string
 	Name    string
@@ -71,6 +73,7 @@ func Open(srcpath string, srcname string) (*Source, error) {
 				srcdb.tablePresorted = append(srcdb.tablePresorted, doFileExists(srcdb.getPresortMarkFile(table)))
 			}
 		}
+		srcdb.presortLock = make([]sync.Mutex, len(srcdb.Tables))
 
 		src.Databases = append(src.Databases, srcdb)
 	}
