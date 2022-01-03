@@ -59,8 +59,8 @@ func MigrateSource(src *srcreader.Source, db *sql.DB, nodup bool) error {
 	var wg sync.WaitGroup
 	for _, srcdb := range src.Databases {
 		wg.Add(1)
-		go func(srcdb srcreader.SrcDatabase) {
-			if err := MigrateDatabase(&srcdb, db, nodup); err != nil {
+		go func(srcdb *srcreader.SrcDatabase) {
+			if err := MigrateDatabase(srcdb, db, nodup); err != nil {
 				panic(fmt.Errorf("error while migrating database [%s] from source %s:\n%s", srcdb.Name, srcdb.SrcName, err))
 			}
 			defer wg.Done()
