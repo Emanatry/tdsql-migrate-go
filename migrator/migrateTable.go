@@ -2,6 +2,7 @@ package migrator
 
 import (
 	"bufio"
+	"bytes"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -63,13 +64,22 @@ func MigrateTable(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, 
 		return errors.New("failed creating transaction tx0: " + err.Error())
 	}
 
+	const keyIdBString = ",\n  KEY (`id`,`b`)"
+	var temporarilySuppressKeyIdB = false
+	// dirty hack to remove index from table 4
+	if strings.Contains(string(sqlfile), keyIdBString) {
+		fmt.Printf("* temporarilySuppressKeyIdB: %s.%s\n", srcdba.Name, tablename)
+		temporarilySuppressKeyIdB = true
+		sqlfile = bytes.Replace(sqlfile, []byte(keyIdBString), []byte{}, -1)
+	}
+
 	prepStmts := []string{
 		fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`;", srcdba.Name),
 		fmt.Sprintf("USE `%s`;", srcdba.Name),
 		string(sqlfile),
 	}
 
-	fmt.Printf("=== %s %s.%s's table creation sql:\n%s\n=== end table creation sql\n\n", srcdba.SrcName, srcdba.Name, tablename, sqlfile)
+	fmt.Printf("=== %s %s.%s's table creation sql(after key suppression):\n%s\n=== end table creation sql\n\n", srcdba.SrcName, srcdba.Name, tablename, sqlfile)
 
 	for _, stmt := range prepStmts {
 		_, err = tx0.Exec(stmt)
@@ -164,6 +174,12 @@ func MigrateTable(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, 
 		csvfile.Seek(int64(seek), 0)
 	}
 
+	fileinfo, err := csvfile.Stat()
+	if err != nil {
+		return err
+	}
+	csvsize := fileinfo.Size()
+
 	csv := bufio.NewReader(csvfile)
 
 	lastSeek := seek
@@ -237,7 +253,7 @@ func MigrateTable(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, 
 		rowsAffected, _ := res.RowsAffected()
 
 		speed := float32(seek-lastSeek) / float32(time.Since(batchStartTime).Milliseconds()) * 1000 / 1024
-		fmt.Printf("batchok %s %s.%s, new seek = %d, rows = %d, %.2fKB/s (%.2fs)\n", srcdba.SrcName, srcdba.Name, tablename, seek, rowsAffected, speed, time.Since(batchStartTime).Seconds())
+		fmt.Printf("batchok %s %s.%s, new seek = (%.2f%%) %d, rows = %d, %.2fKB/s (%.2fs)\n", srcdba.SrcName, srcdba.Name, tablename, float64(seek)/float64(csvsize)*100, seek, rowsAffected, speed, time.Since(batchStartTime).Seconds())
 
 		totalTableRowCount += int(rowsAffected)
 		stats.ReportBytesMigrated(seek - lastSeek)
@@ -245,11 +261,18 @@ func MigrateTable(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, 
 		lastSeek = seek
 
 		if seek == -1 {
+			if temporarilySuppressKeyIdB { // add back KEY(`id`,`b`)
+				fmt.Printf("* adding back temporarilySuppressKeyIdB for %s.%s\n", srcdba.Name, tablename)
+				_, err = db.Exec(fmt.Sprintf("ALTER TABLE `%s`.`%s` ADD INDEX (`id`,`b`);", srcdba.Name, tablename))
+				if err != nil {
+					return errors.New("failed adding back KEY(`id`,`b`): " + err.Error())
+				}
+			}
 			break
 		}
 	}
 
-	fmt.Printf("* finished table source %s db %s table %s, totalRowAffected %d, csvlines: %d (resumed: %v)\n", srcdba.SrcName, srcdba.Name, tablename, totalTableRowCount, totalLines, isResumed)
+	fmt.Printf("* finished table db %s table %s, totalRowAffected %d, csvlines: %d (resumed: %v)\n", srcdba.Name, tablename, totalTableRowCount, totalLines, isResumed)
 
 	return nil
 }
