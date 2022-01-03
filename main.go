@@ -119,25 +119,7 @@ func main() {
 	fmt.Printf("database stats: \n%+v\n", db.Stats())
 
 	var doExit *bool = stats.StartStatsReportingGoroutine(db)
-	println("\n======== presort sources ========")
-	if err := srca.PresortDatabase(); err != nil {
-		panic(err)
-	}
-	if err := srcb.PresortDatabase(); err != nil {
-		panic(err)
-	}
-
-	println("\n======== merge sources ========")
-
-	if err := srcreader.MergeSortedSource(srca, srcb); err != nil {
-		panic(err)
-	}
-
-	merged_src, err := srcreader.Open(srcreader.PRESORT_PATH+"merged", "src_merged")
-	if err != nil {
-		println("failed opening merged source: " + err.Error())
-		return
-	}
+	println("\n======== this implementation sorts and merges on the fly ========")
 
 	println("\n======== migrate database ========")
 
@@ -159,7 +141,7 @@ func main() {
 	// 准备迁移目标实例的环境，创建迁移过程中需要的临时表等。
 	migrator.PrepareTargetDB(db)
 
-	if err := migrator.MigrateSource(merged_src, db, true); err != nil {
+	if err := migrator.MigrateSource(srca, srcb, db, true); err != nil {
 		panic(err)
 	}
 

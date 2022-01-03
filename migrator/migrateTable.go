@@ -1,10 +1,12 @@
 package migrator
 
 import (
+	"bufio"
 	"database/sql"
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -35,15 +37,22 @@ func generateBatchInsertStmts(dbname string, tablename string, columnNames []str
 
 // migrate one table from a source database
 // nodup: true if the data source has already been deduped and there's no need to do that while migrating.
-func MigrateTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB, nodup bool) error {
-	nodupStr := ""
-	if nodup {
-		nodupStr = "nodup"
-	}
-	println("* migrate " + nodupStr + " table " + tablename + " from database " + srcdb.Name + " from " + srcdb.SrcName)
+func MigrateTable(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, tablename string, db *sql.DB, nodup bool) error {
+	println("* migrate table " + tablename + " from database " + srcdba.Name)
 
 	// create the database and table by importing .sqlfile file
-	sqlfile, err := srcdb.ReadSQL(tablename)
+	sqlfile, err := srcdba.ReadSQL(tablename)
+
+	// sort and merge the two tables from source a and b
+	err = srcdba.PresortTable(tablename)
+	if err != nil {
+		return err
+	}
+	err = srcdbb.PresortTable(tablename)
+	if err != nil {
+		return err
+	}
+	mergedCsvPath, err := srcreader.MergeSortedTable(srcdba, srcdbb, tablename)
 
 	if err != nil {
 		return err
@@ -55,12 +64,12 @@ func MigrateTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB, no
 	}
 
 	prepStmts := []string{
-		fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`;", srcdb.Name),
-		fmt.Sprintf("USE `%s`;", srcdb.Name),
+		fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`;", srcdba.Name),
+		fmt.Sprintf("USE `%s`;", srcdba.Name),
 		string(sqlfile),
 	}
 
-	fmt.Printf("=== %s %s.%s's table creation sql:\n%s\n=== end table creation sql\n\n", srcdb.SrcName, srcdb.Name, tablename, sqlfile)
+	fmt.Printf("=== %s %s.%s's table creation sql:\n%s\n=== end table creation sql\n\n", srcdba.SrcName, srcdba.Name, tablename, sqlfile)
 
 	for _, stmt := range prepStmts {
 		_, err = tx0.Exec(stmt)
@@ -70,9 +79,9 @@ func MigrateTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB, no
 	}
 
 	// detect the schema of the table
-	rows, err := db.Query("SELECT `COLUMN_NAME` FROM information_schema.`COLUMNS` WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? ORDER BY `ORDINAL_POSITION`;", srcdb.Name, tablename)
+	rows, err := db.Query("SELECT `COLUMN_NAME` FROM information_schema.`COLUMNS` WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? ORDER BY `ORDINAL_POSITION`;", srcdba.Name, tablename)
 	if err != nil {
-		return fmt.Errorf("failed reading schema of %s.%s: %s", srcdb.Name, tablename, err.Error())
+		return fmt.Errorf("failed reading schema of %s.%s: %s", srcdba.Name, tablename, err.Error())
 	}
 
 	var columnNames []string
@@ -84,11 +93,11 @@ func MigrateTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB, no
 	}
 	rows.Close()
 
-	fmt.Printf("columns of %s.%s: %v\n", srcdb.Name, tablename, columnNames)
+	fmt.Printf("columns of %s.%s: %v\n", srcdba.Name, tablename, columnNames)
 
 	// try to resume from a previous migration
-	fmt.Printf("reading migration log for %s %s.%s\n", srcdb.SrcName, srcdb.Name, tablename)
-	rows, err = db.Query("SELECT `seek` FROM meta_migration.migration_log WHERE dbname = ? AND tablename = ? AND src = ?;", srcdb.Name, tablename, srcdb.SrcName)
+	fmt.Printf("reading migration log for %s %s.%s\n", srcdba.SrcName, srcdba.Name, tablename)
+	rows, err = db.Query("SELECT `seek` FROM meta_migration.migration_log WHERE dbname = ? AND tablename = ? AND src = ?;", srcdba.Name, tablename, srcdba.SrcName)
 
 	if err != nil {
 		return errors.New("failed reading migration log: " + err.Error())
@@ -101,12 +110,12 @@ func MigrateTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB, no
 		if err != nil {
 			return err
 		}
-		fmt.Printf("* resuming %s %s.%s from seek %d\n", srcdb.SrcName, srcdb.Name, tablename, seek)
+		fmt.Printf("* resuming %s %s.%s from seek %d\n", srcdba.SrcName, srcdba.Name, tablename, seek)
 	}
 	rows.Close()
 
 	if seek == -1 {
-		fmt.Printf("* %s %s.%s already finished.\n", srcdb.SrcName, srcdb.Name, tablename)
+		fmt.Printf("* %s %s.%s already finished.\n", srcdba.SrcName, srcdba.Name, tablename)
 		return nil
 	}
 
@@ -117,7 +126,7 @@ func MigrateTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB, no
 	if seek == -2 { // first time migrating the table
 		seek = 0
 		isResumed = false
-		fmt.Printf("* fresh start %s %s.%s from seek %d\n", srcdb.SrcName, srcdb.Name, tablename, seek)
+		fmt.Printf("* fresh start %s %s.%s from seek %d\n", srcdba.SrcName, srcdba.Name, tablename, seek)
 		// create migration log & potentially create temp primary key
 
 		tx0, err := db.Begin()
@@ -125,7 +134,7 @@ func MigrateTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB, no
 			return errors.New("failed creating tx0 when creating migration log: " + err.Error())
 		}
 
-		_, err = tx0.Exec("INSERT INTO meta_migration.migration_log VALUES(?, ?, ?, 0, ?) ON DUPLICATE KEY UPDATE seek = 0;", srcdb.Name, tablename, srcdb.SrcName, 0 /* !hasUniqueIndex */)
+		_, err = tx0.Exec("INSERT INTO meta_migration.migration_log VALUES(?, ?, ?, 0, ?) ON DUPLICATE KEY UPDATE seek = 0;", srcdba.Name, tablename, srcdba.SrcName, 0 /* !hasUniqueIndex */)
 		if err != nil {
 			return errors.New("failed creating migration log: " + err.Error())
 		}
@@ -136,7 +145,7 @@ func MigrateTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB, no
 				> 如果没有主键或者非空唯一索引，如果除updated_at其他数据都一样，只更新updated_at字段；否则，插入一条新的数据。
 				第二种情况，通过添加一个包括所有数据列，但不包括 updated_at 的临时主键，转换为第一种。
 			*/
-			checkAndCreatePKForDedup(tx0, srcdb, tablename, columnNames)
+			checkAndCreatePKForDedup(tx0, srcdba, tablename, columnNames)
 		}
 
 		// commit change to migration log
@@ -147,15 +156,20 @@ func MigrateTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB, no
 		}
 	}
 
-	csv, err := srcdb.OpenCSV(tablename, int64(seek))
+	csvfile, err := os.Open(mergedCsvPath)
 	if err != nil {
 		return err
 	}
+	if seek != 0 {
+		csvfile.Seek(int64(seek), 0)
+	}
+
+	csv := bufio.NewReader(csvfile)
 
 	lastSeek := seek
 
 	// sql statement in string form for a full BatchSize batch insert.
-	fullBatchInsertSqlStmtsStr := generateBatchInsertStmts(srcdb.Name, tablename, columnNames, BatchSize, nodup)
+	fullBatchInsertSqlStmtsStr := generateBatchInsertStmts(srcdba.Name, tablename, columnNames, BatchSize, nodup)
 
 	// batch insert
 	for {
@@ -176,7 +190,7 @@ func MigrateTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB, no
 				// table finished, part of the last batch
 
 				// prepare a shorter batch insert statement just for the last batch
-				stmt, err = tx.Prepare(generateBatchInsertStmts(srcdb.Name, tablename, columnNames, rowCount, nodup))
+				stmt, err = tx.Prepare(generateBatchInsertStmts(srcdba.Name, tablename, columnNames, rowCount, nodup))
 				if err != nil {
 					return errors.New("failed preparing insert statement: " + err.Error())
 				}
@@ -205,14 +219,14 @@ func MigrateTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB, no
 
 		res, err := stmt.Exec(batchData...) // insert one batch of data
 		if err != nil {
-			return fmt.Errorf("failed exec batch seek %d source %s %s.%s: %s", seek, srcdb.SrcName, srcdb.Name, tablename, err.Error())
+			return fmt.Errorf("failed exec batch seek %d source %s %s.%s: %s", seek, srcdba.SrcName, srcdba.Name, tablename, err.Error())
 		}
 		stmt.Close()
 
 		// update migration log at the end of the transaction
-		_, err = tx.Exec("UPDATE meta_migration.migration_log SET seek = ? WHERE dbname = ? AND tablename = ? AND src = ?;", seek, srcdb.Name, tablename, srcdb.SrcName)
+		_, err = tx.Exec("UPDATE meta_migration.migration_log SET seek = ? WHERE dbname = ? AND tablename = ? AND src = ?;", seek, srcdba.Name, tablename, srcdba.SrcName)
 		if err != nil {
-			return fmt.Errorf("failed updating migration log for source %s %s.%s, new seek = %d: %s", srcdb.SrcName, srcdb.Name, tablename, seek, err.Error())
+			return fmt.Errorf("failed updating migration log for source %s %s.%s, new seek = %d: %s", srcdba.SrcName, srcdba.Name, tablename, seek, err.Error())
 		}
 
 		err = tx.Commit()
@@ -223,7 +237,7 @@ func MigrateTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB, no
 		rowsAffected, _ := res.RowsAffected()
 
 		speed := float32(seek-lastSeek) / float32(time.Since(batchStartTime).Milliseconds()) * 1000 / 1024
-		fmt.Printf("batchok %s %s.%s, new seek = %d, rows = %d, %.2fKB/s (%.2fs)\n", srcdb.SrcName, srcdb.Name, tablename, seek, rowsAffected, speed, time.Since(batchStartTime).Seconds())
+		fmt.Printf("batchok %s %s.%s, new seek = %d, rows = %d, %.2fKB/s (%.2fs)\n", srcdba.SrcName, srcdba.Name, tablename, seek, rowsAffected, speed, time.Since(batchStartTime).Seconds())
 
 		totalTableRowCount += int(rowsAffected)
 		stats.ReportBytesMigrated(seek - lastSeek)
@@ -235,7 +249,7 @@ func MigrateTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB, no
 		}
 	}
 
-	fmt.Printf("* finished table source %s db %s table %s, totalRowAffected %d, csvlines: %d (resumed: %v)\n", srcdb.SrcName, srcdb.Name, tablename, totalTableRowCount, totalLines, isResumed)
+	fmt.Printf("* finished table source %s db %s table %s, totalRowAffected %d, csvlines: %d (resumed: %v)\n", srcdba.SrcName, srcdba.Name, tablename, totalTableRowCount, totalLines, isResumed)
 
 	return nil
 }

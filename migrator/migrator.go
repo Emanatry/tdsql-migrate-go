@@ -54,17 +54,17 @@ func PrepareTargetDB(db *sql.DB) {
 }
 
 // migrate a whole data source
-func MigrateSource(src *srcreader.Source, db *sql.DB, nodup bool) error {
-	println("========== starting migration job for source " + src.SrcName)
+func MigrateSource(srca *srcreader.Source, srcb *srcreader.Source, db *sql.DB, nodup bool) error {
+	println("========== starting migration job for source " + srca.SrcName)
 	var wg sync.WaitGroup
-	for _, srcdb := range src.Databases {
+	for i, dba := range srca.Databases {
 		wg.Add(1)
-		go func(srcdb *srcreader.SrcDatabase) {
-			if err := MigrateDatabase(srcdb, db, nodup); err != nil {
-				panic(fmt.Errorf("error while migrating database [%s] from source %s:\n%s", srcdb.Name, srcdb.SrcName, err))
+		go func(dba *srcreader.SrcDatabase, i int) {
+			if err := MigrateDatabase(dba, srcb.Databases[i], db, nodup); err != nil {
+				panic(fmt.Errorf("error while migrating database [%s] from source %s:\n%s", dba.Name, dba.SrcName, err))
 			}
 			defer wg.Done()
-		}(srcdb)
+		}(dba, i)
 
 	}
 	wg.Wait()
@@ -72,10 +72,10 @@ func MigrateSource(src *srcreader.Source, db *sql.DB, nodup bool) error {
 }
 
 // migrate one database of a data source
-func MigrateDatabase(srcdb *srcreader.SrcDatabase, db *sql.DB, nodup bool) error {
-	println("======= migrate database [" + srcdb.Name + "] from " + srcdb.SrcName)
-	for _, table := range srcdb.Tables {
-		if err := MigrateTable(srcdb, table, db, nodup); err != nil {
+func MigrateDatabase(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, db *sql.DB, nodup bool) error {
+	println("======= migrate database [" + srcdba.Name + "]")
+	for _, table := range srcdba.Tables {
+		if err := MigrateTable(srcdba, srcdbb, table, db, nodup); err != nil {
 			return fmt.Errorf("error while migrating table [%s]:\n%s", table, err)
 		}
 	}

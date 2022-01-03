@@ -6,9 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"sync"
-
-	"github.com/Emanatry/tdsql-migrate-go/semaphore"
 )
 
 const PRESORT_PATH = "./presort/data/"
@@ -53,123 +50,93 @@ func (d *SrcDatabase) IsTablePresorted(table string) bool {
 	return false
 }
 
-func (s *Source) PresortDatabase() error {
-	err := os.MkdirAll(PRESORT_PATH+s.SrcName, 0755)
+func (db *SrcDatabase) getTableIndex(table string) int {
+	for i, v := range db.Tables {
+		if v == table {
+			return i
+		}
+	}
+	return -1
+}
+
+func (db *SrcDatabase) PresortTable(table string) error {
+	err := os.MkdirAll(PRESORT_PATH+db.SrcName+"/"+db.Name, 0755)
 	if err != nil {
 		return err
 	}
-	rateLimitSem := semaphore.New(CONCURRENT_PRESORT_JOB)
-	var wg sync.WaitGroup
-
-	for _, db := range s.Databases {
-		err := os.MkdirAll(PRESORT_PATH+s.SrcName+"/"+db.Name, 0755)
-		if err != nil {
-			return err
-		}
-		for i, table := range db.Tables {
-			wg.Add(1)
-			go func(db *SrcDatabase, table string, i int) {
-				defer wg.Done()
-				if db.tablePresorted[i] {
-					return
-				}
-
-				rateLimitSem.Acquire() // rate limit
-				defer rateLimitSem.Release()
-
-				coltype, err := db.determinePKColumnType(table)
-				if err != nil {
-					panic(err)
-				}
-				fmt.Printf("@ presorting %s %s.%s (%s)\n", s.SrcName, db.Name, table, coltype)
-				// presort files by running c++ sorting program
-				cmd := exec.Command(SORTER_PROGRAM, db.srcdbpath+"/"+table+".csv", db.getPresortOutputFile(table), coltype)
-				err = cmd.Run()
-				if err != nil {
-					panic(err)
-				}
-
-				// create mark file for presorted tables
-				f, err := os.Create(db.getPresortMarkFile(table))
-				if err != nil {
-					panic(err)
-				}
-				f.Close()
-
-				db.tablePresorted[i] = true
-			}(db, table, i)
-		}
+	if db.tablePresorted[db.getTableIndex(table)] {
+		return nil
 	}
-	wg.Wait()
+
+	coltype, err := db.determinePKColumnType(table)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("@ presorting %s %s.%s (%s)\n", db.SrcName, db.Name, table, coltype)
+	// presort files by running c++ sorting program
+	cmd := exec.Command(SORTER_PROGRAM, db.srcdbpath+"/"+table+".csv", db.getPresortOutputFile(table), coltype)
+	err = cmd.Run()
+	if err != nil {
+		return err
+	}
+
+	// create mark file for presorted tables
+	f, err := os.Create(db.getPresortMarkFile(table))
+	if err != nil {
+		return err
+	}
+	f.Close()
+
+	db.tablePresorted[db.getTableIndex(table)] = true
 	return nil
 }
 
-func MergeSortedSource(a *Source, b *Source) error {
-	root := PRESORT_PATH + "merged"
-	err := os.MkdirAll(root, 0755)
+func MergeSortedTable(dba *SrcDatabase, dbb *SrcDatabase, table string) (csvpath string, err error) {
+	dbroot := PRESORT_PATH + "merged" + "/" + dba.Name
+	mergeOutputFile := dbroot + "/" + table + ".csv"
+	err = os.MkdirAll(dbroot, 0755)
 	if err != nil {
-		return err
+		return "", err
 	}
-	rateLimitSem := semaphore.New(CONCURRENT_PRESORT_JOB)
-	var wg sync.WaitGroup
-
-	for i, dba := range a.Databases {
-		dbb := b.Databases[i]
-		dbroot := root + "/" + dba.Name
-		err := os.MkdirAll(dbroot, 0755)
-		if err != nil {
-			return err
-		}
-		for _, table := range dba.Tables {
-			wg.Add(1)
-			go func(dba *SrcDatabase, dbb *SrcDatabase, table string) {
-				defer wg.Done()
-				markfile := dbroot + "/" + table + ".mark"
-				if doFileExists(markfile) {
-					return
-				}
-
-				rateLimitSem.Acquire()
-				defer rateLimitSem.Release()
-
-				coltype, err := dba.determinePKColumnType(table)
-				if err != nil {
-					panic(err)
-				}
-				fmt.Printf("@ merging %s.%s (%s)\n", dba.Name, table, coltype)
-				sql, err := dba.ReadSQL(table)
-				if err != nil {
-					panic(err)
-				}
-				err = ioutil.WriteFile(dbroot+"/"+table+".sql", sql, 0755)
-				if err != nil {
-					panic(err)
-				}
-				cmd := exec.Command(MERGER_PROGRAM, dba.getPresortOutputFile(table), dbb.getPresortOutputFile(table), dbroot+"/"+table+".csv", coltype)
-				stdout, err := cmd.StdoutPipe()
-				if err != nil {
-					panic(err)
-				}
-				err = cmd.Start()
-				if err != nil {
-					panic(err)
-				}
-				out, err := ioutil.ReadAll(stdout)
-				if err != nil {
-					panic(err)
-				}
-				println(string(out))
-				cmd.Wait()
-
-				// create mark file for merged tables
-				f, err := os.Create(markfile)
-				if err != nil {
-					panic(err)
-				}
-				f.Close()
-			}(dba, dbb, table)
-		}
+	markfile := dbroot + "/" + table + ".mark"
+	if doFileExists(markfile) {
+		return "", err
 	}
-	wg.Wait()
-	return nil
+
+	coltype, err := dba.determinePKColumnType(table)
+	if err != nil {
+		return "", err
+	}
+	fmt.Printf("@ merging %s.%s (%s)\n", dba.Name, table, coltype)
+	sql, err := dba.ReadSQL(table)
+	if err != nil {
+		return "", err
+	}
+	err = ioutil.WriteFile(dbroot+"/"+table+".sql", sql, 0755)
+	if err != nil {
+		return "", err
+	}
+	cmd := exec.Command(MERGER_PROGRAM, dba.getPresortOutputFile(table), dbb.getPresortOutputFile(table), mergeOutputFile, coltype)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return "", err
+	}
+	err = cmd.Start()
+	if err != nil {
+		return "", err
+	}
+	out, err := ioutil.ReadAll(stdout)
+	if err != nil {
+		return "", err
+	}
+	println(string(out))
+	cmd.Wait()
+
+	// create mark file for merged tables
+	f, err := os.Create(markfile)
+	if err != nil {
+		return "", err
+	}
+	f.Close()
+	return mergeOutputFile, err
 }

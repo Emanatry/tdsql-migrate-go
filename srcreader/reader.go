@@ -88,17 +88,5 @@ func (d *SrcDatabase) ReadSQL(tablename string) (sqlContent []byte, err error) {
 }
 
 func (d *SrcDatabase) OpenCSV(tablename string, seek int64) (*bufio.Reader, error) {
-	path := d.srcdbpath + "/" + tablename + ".csv"
-	if d.IsTablePresorted(tablename) {
-		path = d.getPresortOutputFile(tablename)
-	}
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	if seek != 0 {
-		file.Seek(seek, 0)
-	}
-
-	return bufio.NewReader(file), nil
+	panic("SrcDatabase.OpenCSV() should not be used in this implementation")
 }
