@@ -43,6 +43,9 @@ func MigrateTable(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, 
 
 	// create the database and table by importing .sqlfile file
 	sqlfile, err := srcdba.ReadSQL(tablename)
+	if err != nil {
+		return err
+	}
 
 	// sort and merge the two tables from source a and b
 	err = srcdba.PresortTable(tablename)
