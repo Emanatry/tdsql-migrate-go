@@ -87,8 +87,9 @@ func createTable(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, t
 
 // migrate one table from a source database
 // nodup: true if the data source has already been deduped and there's no need to do that while migrating.
-func MigrateTable(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, tablename string, db *sql.DB, nodup bool) error {
+func MigrateTable(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, tablename string, db *sql.DB) error {
 	println("* migrate table " + tablename + " from database " + srcdba.Name)
+	nodup := true
 
 	sqlfile, err := srcdba.ReadSQL(tablename)
 	if err != nil {

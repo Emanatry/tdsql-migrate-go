@@ -123,6 +123,8 @@ func main() {
 
 	println("\n======== migrate database ========")
 
+	doCreateTable := true
+
 	// workaround for a judge env bug where not all tables from a previous migration attempt is dropped
 	if _, err := os.Stat("./migration_inprogress.txt"); errors.Is(err, os.ErrNotExist) {
 		f, err := os.Create("./migration_inprogress.txt")
@@ -136,6 +138,7 @@ func main() {
 		f.Close()
 	} else {
 		fmt.Printf("migration_inprogress.txt exists.\n")
+		doCreateTable = false
 	}
 
 	// 准备迁移目标实例的环境，创建迁移过程中需要的临时表等。
@@ -144,7 +147,7 @@ func main() {
 	println("\n======== starting backgound presort & merge ========")
 	srcreader.StartBackgoundPresortMerge(srca, srcb)
 
-	if err := migrator.MigrateSource(srca, srcb, db, true); err != nil {
+	if err := migrator.MigrateSource(srca, srcb, db, doCreateTable); err != nil {
 		panic(err)
 	}
 

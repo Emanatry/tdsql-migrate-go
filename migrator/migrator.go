@@ -54,13 +54,13 @@ func PrepareTargetDB(db *sql.DB) {
 }
 
 // migrate a whole data source
-func MigrateSource(srca *srcreader.Source, srcb *srcreader.Source, db *sql.DB, nodup bool) error {
+func MigrateSource(srca *srcreader.Source, srcb *srcreader.Source, db *sql.DB, doCreateTable bool) error {
 	println("========== starting migration job for source " + srca.SrcName)
 	var wg sync.WaitGroup
 	for i, dba := range srca.Databases {
 		wg.Add(1)
 		go func(dba *srcreader.SrcDatabase, i int) {
-			if err := MigrateDatabase(dba, srcb.Databases[i], db, nodup); err != nil {
+			if err := MigrateDatabase(dba, srcb.Databases[i], db, doCreateTable); err != nil {
 				panic(fmt.Errorf("error while migrating database [%s] from source %s:\n%s", dba.Name, dba.SrcName, err))
 			}
 			defer wg.Done()
@@ -72,11 +72,11 @@ func MigrateSource(srca *srcreader.Source, srcb *srcreader.Source, db *sql.DB, n
 }
 
 // migrate one database of a data source
-func MigrateDatabase(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, db *sql.DB, nodup bool) error {
+func MigrateDatabase(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, db *sql.DB, doCreateTable bool) error {
 	println("======= migrate database [" + srcdba.Name + "]")
 	c := make(chan error)
 	migrate := func(table string) {
-		if err := MigrateTable(srcdba, srcdbb, table, db, nodup); err != nil {
+		if err := MigrateTable(srcdba, srcdbb, table, db); err != nil {
 			c <- fmt.Errorf("error while migrating table [%s]:\n%s", table, err)
 		}
 		c <- nil
@@ -85,8 +85,10 @@ func MigrateDatabase(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabas
 	// since transaction is not used for insertion, there's a slight chance
 	// that the table will not be present at the time of insertion on some shards,
 	// resulting in an error. this reduces but *doesn't eliminate* the chance of that.
-	for _, table := range srcdba.Tables {
-		createTable(srcdba, srcdbb, table, db)
+	if doCreateTable {
+		for _, table := range srcdba.Tables {
+			createTable(srcdba, srcdbb, table, db)
+		}
 	}
 
 	// shift these around to migrate multiple tables concurrently
