@@ -76,9 +76,9 @@ func MigrateTable(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, 
 	}
 	// another dirty hack to add shard key (tdsql only)
 	if !bytes.Contains(sqlfile, []byte("PRIMARY KEY")) { // must have primary key to use shard key
-		fmt.Printf("* adding primary key(id) to %s.%s\n", srcdba.Name, tablename)
-		idx := bytes.Index(sqlfile, []byte("\n) ENGINE=InnoDB DEFAULT CHARSET=utf8"))
-		sqlfile = bytes.Join([][]byte{sqlfile[:idx], []byte(",\n  PRIMARY KEY(`id`)\n"), sqlfile[idx:]}, []byte{})
+		fmt.Printf("* adding primary key(id,a,b) to %s.%s\n", srcdba.Name, tablename)
+		idx := bytes.Index(sqlfile, []byte(") ENGINE=InnoDB DEFAULT CHARSET=utf8"))
+		sqlfile = bytes.Join([][]byte{sqlfile[:idx], []byte(",\n  PRIMARY KEY(`id`,`a`,`b`)\n"), sqlfile[idx:]}, []byte{})
 	}
 	sqlfile = append(sqlfile, " shardkey=id"...)
 
