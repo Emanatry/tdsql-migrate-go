@@ -92,12 +92,12 @@ func MigrateDatabase(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabas
 	if err != nil {
 		return err
 	}
-	go migrate(srcdba.Tables[2])
+	go migrate(srcdba.Tables[3]) // migrate table 4 before 3, to allow more time for key rebuild
 	err = <-c
 	if err != nil {
 		return err
 	}
-	go migrate(srcdba.Tables[3])
+	go migrate(srcdba.Tables[2])
 	err = <-c
 	if err != nil {
 		return err

@@ -188,7 +188,7 @@ func StartBackgoundPresortMerge(srca *Source, srcb *Source) {
 			}
 		}
 		sortAndMergeTable("2")
+		sortAndMergeTable("4") // migrate table 4 before 3, to allow more time for key rebuild
 		sortAndMergeTable("3")
-		sortAndMergeTable("4")
 	}()
 }
