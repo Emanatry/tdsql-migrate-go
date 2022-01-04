@@ -31,6 +31,8 @@ func generateBatchInsertStmts(dbname string, tablename string, columnNames []str
 				str.WriteRune(',')
 			}
 		}
+	} else {
+		str.WriteString(" ON DUPLICATE KEY UPDATE updated_at=updated_at") // ignore rows with duplicate key
 	}
 	return str.String()
 }
@@ -61,11 +63,6 @@ func MigrateTable(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, 
 		return err
 	}
 
-	tx0, err := db.Begin()
-	if err != nil {
-		return errors.New("failed creating transaction tx0: " + err.Error())
-	}
-
 	const keyIdBString = ",\n  KEY (`id`,`b`)"
 	var temporarilySuppressKeyIdB = false
 	// dirty hack to remove index from table 4
@@ -91,7 +88,7 @@ func MigrateTable(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, 
 	fmt.Printf("=== %s %s.%s's table creation sql(after transformation):\n%s\n=== end table creation sql\n\n", srcdba.SrcName, srcdba.Name, tablename, sqlfile)
 
 	for _, stmt := range prepStmts {
-		_, err = tx0.Exec(stmt)
+		_, err = db.Exec(stmt)
 		if err != nil {
 			return errors.New("failed creating database and table: executing\n" + stmt + "\nerror:" + err.Error())
 		}
@@ -116,22 +113,12 @@ func MigrateTable(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, 
 
 	// try to resume from a previous migration
 	fmt.Printf("reading migration log for %s %s.%s\n", srcdba.SrcName, srcdba.Name, tablename)
-	rows, err = db.Query("SELECT `seek` FROM meta_migration.migration_log WHERE dbname = ? AND tablename = ? AND src = ?;", srcdba.Name, tablename, srcdba.SrcName)
-
+	seek, err := readSeekMigrationLog(srcdba.SrcName, srcdba.Name, tablename)
 	if err != nil {
 		return errors.New("failed reading migration log: " + err.Error())
 	}
 
-	var seek int = -2
-
-	for rows.Next() {
-		err := rows.Scan(&seek)
-		if err != nil {
-			return err
-		}
-		fmt.Printf("* resuming %s %s.%s from seek %d\n", srcdba.SrcName, srcdba.Name, tablename, seek)
-	}
-	rows.Close()
+	fmt.Printf("* resuming %s %s.%s from seek %d\n", srcdba.SrcName, srcdba.Name, tablename, seek)
 
 	if seek == -1 {
 		fmt.Printf("* %s %s.%s already finished.\n", srcdba.SrcName, srcdba.Name, tablename)
@@ -148,12 +135,7 @@ func MigrateTable(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, 
 		fmt.Printf("* fresh start %s %s.%s from seek %d\n", srcdba.SrcName, srcdba.Name, tablename, seek)
 		// create migration log & potentially create temp primary key
 
-		tx0, err := db.Begin()
-		if err != nil {
-			return errors.New("failed creating tx0 when creating migration log: " + err.Error())
-		}
-
-		_, err = tx0.Exec("INSERT INTO meta_migration.migration_log VALUES(?, ?, ?, 0, ?) ON DUPLICATE KEY UPDATE seek = 0;", srcdba.Name, tablename, srcdba.SrcName, 0 /* !hasUniqueIndex */)
+		err = writeSeekMigrationLog(srcdba.SrcName, srcdba.Name, tablename, 0)
 		if err != nil {
 			return errors.New("failed creating migration log: " + err.Error())
 		}
@@ -164,14 +146,7 @@ func MigrateTable(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, 
 				> 如果没有主键或者非空唯一索引，如果除updated_at其他数据都一样，只更新updated_at字段；否则，插入一条新的数据。
 				第二种情况，通过添加一个包括所有数据列，但不包括 updated_at 的临时主键，转换为第一种。
 			*/
-			checkAndCreatePKForDedup(tx0, srcdba, tablename, columnNames)
-		}
-
-		// commit change to migration log
-
-		err = tx0.Commit()
-		if err != nil {
-			return errors.New("failed committing tx0 when creating migration log: " + err.Error())
+			checkAndCreatePKForDedup(db, srcdba, tablename, columnNames)
 		}
 	}
 
@@ -200,10 +175,6 @@ func MigrateTable(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, 
 	for {
 		batchStartTime := time.Now()
 		// create a transaction for this batch of data
-		tx, err := db.Begin()
-		if err != nil {
-			return errors.New("failed creating transaction: " + err.Error())
-		}
 
 		// generate the batch insert sql statement
 		var stmt *sql.Stmt
@@ -215,7 +186,7 @@ func MigrateTable(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, 
 				// table finished, part of the last batch
 
 				// prepare a shorter batch insert statement just for the last batch
-				stmt, err = tx.Prepare(generateBatchInsertStmts(srcdba.Name, tablename, columnNames, rowCount, nodup))
+				stmt, err = db.Prepare(generateBatchInsertStmts(srcdba.Name, tablename, columnNames, rowCount, nodup))
 				if err != nil {
 					return errors.New("failed preparing insert statement: " + err.Error())
 				}
@@ -236,7 +207,7 @@ func MigrateTable(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, 
 		}
 
 		if isFullBatch {
-			stmt, err = tx.Prepare(fullBatchInsertSqlStmtsStr)
+			stmt, err = db.Prepare(fullBatchInsertSqlStmtsStr)
 			if err != nil {
 				return errors.New("failed preparing insert statement: " + err.Error())
 			}
@@ -248,15 +219,10 @@ func MigrateTable(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, 
 		}
 		stmt.Close()
 
-		// update migration log at the end of the transaction
-		_, err = tx.Exec("UPDATE meta_migration.migration_log SET seek = ? WHERE dbname = ? AND tablename = ? AND src = ?;", seek, srcdba.Name, tablename, srcdba.SrcName)
+		// update migration log at the end of the batch
+		err = writeSeekMigrationLog(srcdba.SrcName, srcdba.Name, tablename, seek)
 		if err != nil {
 			return fmt.Errorf("failed updating migration log for source %s %s.%s, new seek = %d: %s", srcdba.SrcName, srcdba.Name, tablename, seek, err.Error())
-		}
-
-		err = tx.Commit()
-		if err != nil {
-			return errors.New("failed commiting transaction: " + err.Error())
 		}
 
 		rowsAffected, _ := res.RowsAffected()
