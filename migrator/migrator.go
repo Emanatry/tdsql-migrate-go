@@ -81,10 +81,14 @@ func MigrateDatabase(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabas
 		}
 		c <- nil
 	}
-	// migrate two tables concurrently
+	// shift these around to migrate multiple tables concurrently
 	go migrate(srcdba.Tables[0])
-	go migrate(srcdba.Tables[1])
 	err := <-c
+	if err != nil {
+		return err
+	}
+	go migrate(srcdba.Tables[1])
+	err = <-c
 	if err != nil {
 		return err
 	}
@@ -94,10 +98,6 @@ func MigrateDatabase(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabas
 		return err
 	}
 	go migrate(srcdba.Tables[3])
-	err = <-c
-	if err != nil {
-		return err
-	}
 	err = <-c
 	if err != nil {
 		return err
