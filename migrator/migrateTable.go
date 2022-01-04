@@ -37,38 +37,18 @@ func generateBatchInsertStmts(dbname string, tablename string, columnNames []str
 	return str.String()
 }
 
-// migrate one table from a source database
-// nodup: true if the data source has already been deduped and there's no need to do that while migrating.
-func MigrateTable(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, tablename string, db *sql.DB, nodup bool) error {
-	println("* migrate table " + tablename + " from database " + srcdba.Name)
+const keyIdBString = ",\n  KEY (`id`,`b`)"
 
+func createTable(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, tablename string, db *sql.DB) error {
 	// create the database and table by importing .sqlfile file
 	sqlfile, err := srcdba.ReadSQL(tablename)
 	if err != nil {
 		return err
 	}
 
-	// sort and merge the two tables from source a and b
-	err = srcdba.PresortTable(tablename)
-	if err != nil {
-		return err
-	}
-	err = srcdbb.PresortTable(tablename)
-	if err != nil {
-		return err
-	}
-	mergedCsvPath, err := srcreader.MergeSortedTable(srcdba, srcdbb, tablename)
-
-	if err != nil {
-		return err
-	}
-
-	const keyIdBString = ",\n  KEY (`id`,`b`)"
-	var temporarilySuppressKeyIdB = false
+	fmt.Printf("@ creating table: %s.%s\n", srcdba.Name, tablename)
 	// dirty hack to remove index from table 4
 	if bytes.Contains(sqlfile, []byte(keyIdBString)) {
-		fmt.Printf("* temporarilySuppressKeyIdB: %s.%s\n", srcdba.Name, tablename)
-		temporarilySuppressKeyIdB = true
 		sqlfile = bytes.Replace(sqlfile, []byte(keyIdBString), []byte{}, -1)
 	}
 	// another dirty hack to add shard key (tdsql only)
@@ -87,29 +67,59 @@ func MigrateTable(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, 
 
 	fmt.Printf("=== %s %s.%s's table creation sql(after transformation):\n%s\n=== end table creation sql\n\n", srcdba.SrcName, srcdba.Name, tablename, sqlfile)
 
+	tx0, err := db.Begin()
+	if err != nil {
+		return errors.New("failed creating transaction while creating table %s, %s")
+	}
+
 	for _, stmt := range prepStmts {
-		_, err = db.Exec(stmt)
+		_, err = tx0.Exec(stmt)
 		if err != nil {
 			return errors.New("failed creating database and table: executing\n" + stmt + "\nerror:" + err.Error())
 		}
 	}
-
-	// detect the schema of the table
-	rows, err := db.Query("SELECT `COLUMN_NAME` FROM information_schema.`COLUMNS` WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? ORDER BY `ORDINAL_POSITION`;", srcdba.Name, tablename)
+	err = tx0.Commit()
 	if err != nil {
-		return fmt.Errorf("failed reading schema of %s.%s: %s", srcdba.Name, tablename, err.Error())
+		return errors.New("failed committing transaction while creating table %s, %s")
+	}
+	return nil
+}
+
+// migrate one table from a source database
+// nodup: true if the data source has already been deduped and there's no need to do that while migrating.
+func MigrateTable(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, tablename string, db *sql.DB, nodup bool) error {
+	println("* migrate table " + tablename + " from database " + srcdba.Name)
+
+	sqlfile, err := srcdba.ReadSQL(tablename)
+	if err != nil {
+		return err
 	}
 
-	var columnNames []string
-
-	for rows.Next() {
-		var columnName string
-		rows.Scan(&columnName)
-		columnNames = append(columnNames, columnName)
+	var temporarilySuppressKeyIdB = false
+	// dirty hack to remove index from table 4
+	if bytes.Contains(sqlfile, []byte(keyIdBString)) {
+		fmt.Printf("* temporarilySuppressKeyIdB: %s.%s\n", srcdba.Name, tablename)
+		temporarilySuppressKeyIdB = true
 	}
-	rows.Close()
 
-	fmt.Printf("columns of %s.%s: %v\n", srcdba.Name, tablename, columnNames)
+	// sort and merge the two tables from source a and b
+	err = srcdba.PresortTable(tablename)
+	if err != nil {
+		return err
+	}
+	err = srcdbb.PresortTable(tablename)
+	if err != nil {
+		return err
+	}
+	mergedCsvPath, err := srcreader.MergeSortedTable(srcdba, srcdbb, tablename)
+
+	if err != nil {
+		return err
+	}
+
+	var columnNames = []string{"id", "a", "b", "updated_at"} // now hardcoded for performance
+
+	// fmt.Printf("columns of %s.%s: %v\n", srcdba.Name, tablename, columnNames)
 
 	// try to resume from a previous migration
 	fmt.Printf("reading migration log for %s %s.%s\n", srcdba.SrcName, srcdba.Name, tablename)
@@ -171,6 +181,7 @@ func MigrateTable(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, 
 	// sql statement in string form for a full BatchSize batch insert.
 	fullBatchInsertSqlStmtsStr := generateBatchInsertStmts(srcdba.Name, tablename, columnNames, BatchSize, nodup)
 
+	batchCounter := 0
 	// batch insert
 	for {
 		batchStartTime := time.Now()
@@ -220,10 +231,14 @@ func MigrateTable(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, 
 		stmt.Close()
 
 		// update migration log at the end of the batch
-		err = writeSeekMigrationLog(srcdba.SrcName, srcdba.Name, tablename, seek)
-		if err != nil {
-			return fmt.Errorf("failed updating migration log for source %s %s.%s, new seek = %d: %s", srcdba.SrcName, srcdba.Name, tablename, seek, err.Error())
+		if batchCounter == 20 {
+			err = writeSeekMigrationLog(srcdba.SrcName, srcdba.Name, tablename, seek)
+			if err != nil {
+				return fmt.Errorf("failed updating migration log for %s %s.%s, new seek = %d: %s", srcdba.SrcName, srcdba.Name, tablename, seek, err.Error())
+			}
+			batchCounter = 0
 		}
+		batchCounter++
 
 		rowsAffected, _ := res.RowsAffected()
 

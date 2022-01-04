@@ -81,6 +81,14 @@ func MigrateDatabase(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabas
 		}
 		c <- nil
 	}
+	// creating all tables in advance
+	// since transaction is not used for insertion, there's a slight chance
+	// that the table will not be present at the time of insertion on some shards,
+	// resulting in an error. this reduces but *doesn't eliminate* the chance of that.
+	for _, table := range srcdba.Tables {
+		createTable(srcdba, srcdbb, table, db)
+	}
+
 	// shift these around to migrate multiple tables concurrently
 	go migrate(srcdba.Tables[0])
 	err := <-c
