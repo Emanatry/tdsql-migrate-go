@@ -18,7 +18,7 @@ import (
 func generateBatchInsertStmts(dbname string, tablename string, columnNames []string, batchSize int, nodup bool) string {
 	var str strings.Builder
 	valuesString := fmt.Sprintf("(?%s)", strings.Repeat(",?", len(columnNames)-1))
-	str.WriteString(fmt.Sprintf("INSERT INTO `%s`.`%s` VALUES %s", dbname, tablename, valuesString))
+	str.WriteString(fmt.Sprintf("INSERT INTO `%s`.`%s` (%s) VALUES %s", dbname, tablename, strings.Join(columnNames, ","), valuesString))
 	for i := 0; i < batchSize-1; i++ {
 		str.WriteRune(',')
 		str.WriteString(valuesString)
@@ -32,7 +32,6 @@ func generateBatchInsertStmts(dbname string, tablename string, columnNames []str
 			}
 		}
 	}
-	str.WriteString(";")
 	return str.String()
 }
 
@@ -70,11 +69,18 @@ func MigrateTable(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, 
 	const keyIdBString = ",\n  KEY (`id`,`b`)"
 	var temporarilySuppressKeyIdB = false
 	// dirty hack to remove index from table 4
-	if strings.Contains(string(sqlfile), keyIdBString) {
+	if bytes.Contains(sqlfile, []byte(keyIdBString)) {
 		fmt.Printf("* temporarilySuppressKeyIdB: %s.%s\n", srcdba.Name, tablename)
 		temporarilySuppressKeyIdB = true
 		sqlfile = bytes.Replace(sqlfile, []byte(keyIdBString), []byte{}, -1)
 	}
+	// another dirty hack to add shard key (tdsql only)
+	if !bytes.Contains(sqlfile, []byte("PRIMARY KEY")) { // must have primary key to use shard key
+		fmt.Printf("* adding primary key(id) to %s.%s\n", srcdba.Name, tablename)
+		idx := bytes.Index(sqlfile, []byte("\n) ENGINE=InnoDB DEFAULT CHARSET=utf8"))
+		sqlfile = bytes.Join([][]byte{sqlfile[:idx], []byte(",\n  PRIMARY KEY(`id`)\n"), sqlfile[idx:]}, []byte{})
+	}
+	sqlfile = append(sqlfile, " shardkey=id"...)
 
 	prepStmts := []string{
 		fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`;", srcdba.Name),
@@ -82,7 +88,7 @@ func MigrateTable(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, 
 		string(sqlfile),
 	}
 
-	fmt.Printf("=== %s %s.%s's table creation sql(after key suppression):\n%s\n=== end table creation sql\n\n", srcdba.SrcName, srcdba.Name, tablename, sqlfile)
+	fmt.Printf("=== %s %s.%s's table creation sql(after transformation):\n%s\n=== end table creation sql\n\n", srcdba.SrcName, srcdba.Name, tablename, sqlfile)
 
 	for _, stmt := range prepStmts {
 		_, err = tx0.Exec(stmt)
