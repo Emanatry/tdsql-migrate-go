@@ -153,7 +153,7 @@ func MigrateTable(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, 
 			return errors.New("failed creating tx0 when creating migration log: " + err.Error())
 		}
 
-		_, err = tx0.Exec("INSERT INTO meta_migration.migration_log VALUES(?, ?, ?, 0, ?) ON DUPLICATE KEY UPDATE seek = 0;", srcdba.Name, tablename, srcdba.SrcName, 0 /* !hasUniqueIndex */)
+		_, err = tx0.Exec("INSERT INTO meta_migration.migration_log (dbname,tablename,src,seek,temp_prikey) VALUES(?, ?, ?, 0, ?) ON DUPLICATE KEY UPDATE seek = 0;", srcdba.Name, tablename, srcdba.SrcName, 0 /* !hasUniqueIndex */)
 		if err != nil {
 			return errors.New("failed creating migration log: " + err.Error())
 		}

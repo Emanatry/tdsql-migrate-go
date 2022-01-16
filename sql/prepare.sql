@@ -7,4 +7,4 @@ CREATE TABLE IF NOT EXISTS `migration_log` (
   `seek` bigint(32) NOT NULL,
   `temp_prikey` int(16) NOT NULL,
   PRIMARY KEY (`dbname`,`tablename`,`src`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 shardkey=noshardkey_allset;
