@@ -35,39 +35,20 @@ func generateBatchInsertStmts(dbname string, tablename string, columnNames []str
 	return str.String()
 }
 
-// migrate one table from a source database
-// nodup: true if the data source has already been deduped and there's no need to do that while migrating.
-func MigrateTable(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, tablename string, db *sql.DB, nodup bool) error {
-	println("* migrate table " + tablename + " from database " + srcdba.Name)
-
+func migrationStepCreateTable(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, tablename string, db *sql.DB) (temporarilySuppressKeyIdB bool, err error) {
 	// create the database and table by importing .sqlfile file
 	sqlfile, err := srcdba.ReadSQL(tablename)
 	if err != nil {
-		return err
-	}
-
-	// sort and merge the two tables from source a and b
-	err = srcdba.PresortTable(tablename)
-	if err != nil {
-		return err
-	}
-	err = srcdbb.PresortTable(tablename)
-	if err != nil {
-		return err
-	}
-	mergedCsvPath, err := srcreader.MergeSortedTable(srcdba, srcdbb, tablename)
-
-	if err != nil {
-		return err
+		return false, err
 	}
 
 	tx0, err := db.Begin()
 	if err != nil {
-		return errors.New("failed creating transaction tx0: " + err.Error())
+		return false, errors.New("failed creating transaction tx0: " + err.Error())
 	}
 
 	const keyIdBString = ",\n  KEY (`id`,`b`)"
-	var temporarilySuppressKeyIdB = false
+	temporarilySuppressKeyIdB = false // for better performance in table 4, create the key after the migration finishes
 	// dirty hack to remove index from table 4
 	if bytes.Contains(sqlfile, []byte(keyIdBString)) {
 		fmt.Printf("* temporarilySuppressKeyIdB: %s.%s\n", srcdba.Name, tablename)
@@ -93,14 +74,18 @@ func MigrateTable(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, 
 	for _, stmt := range prepStmts {
 		_, err = tx0.Exec(stmt)
 		if err != nil {
-			return errors.New("failed creating database and table: executing\n" + stmt + "\nerror:" + err.Error())
+			return false, errors.New("failed creating database and table: executing\n" + stmt + "\nerror:" + err.Error())
 		}
 	}
+	return temporarilySuppressKeyIdB, nil
+}
+
+func migrationStepDetectColumns(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, tablename string, db *sql.DB) ([]string, error) {
 
 	// detect the schema of the table
 	rows, err := db.Query("SELECT `COLUMN_NAME` FROM information_schema.`COLUMNS` WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? ORDER BY `ORDINAL_POSITION`;", srcdba.Name, tablename)
 	if err != nil {
-		return fmt.Errorf("failed reading schema of %s.%s: %s", srcdba.Name, tablename, err.Error())
+		return nil, fmt.Errorf("failed reading schema of %s.%s: %s", srcdba.Name, tablename, err.Error())
 	}
 
 	var columnNames []string
@@ -113,25 +98,101 @@ func MigrateTable(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, 
 	rows.Close()
 
 	fmt.Printf("columns of %s.%s: %v\n", srcdba.Name, tablename, columnNames)
+	return columnNames, nil
+}
 
+// return value: -3: error, -2: not started, -1: finished, any other non-negative number: continue from this position
+func migrationStepReadMigrationLog(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, tablename string, db *sql.DB) (seek int, err error) {
 	// try to resume from a previous migration
 	fmt.Printf("reading migration log for %s %s.%s\n", srcdba.SrcName, srcdba.Name, tablename)
-	rows, err = db.Query("SELECT `seek` FROM meta_migration.migration_log WHERE dbname = ? AND tablename = ? AND src = ?;", srcdba.Name, tablename, srcdba.SrcName)
+	rows, err := db.Query("SELECT `seek` FROM meta_migration.migration_log WHERE dbname = ? AND tablename = ? AND src = ?;", srcdba.Name, tablename, srcdba.SrcName)
 
 	if err != nil {
-		return errors.New("failed reading migration log: " + err.Error())
+		return -3, errors.New("failed reading migration log: " + err.Error())
 	}
 
-	var seek int = -2
+	seek = -2
 
 	for rows.Next() {
 		err := rows.Scan(&seek)
 		if err != nil {
-			return err
+			return -3, err
 		}
 		fmt.Printf("* resuming %s %s.%s from seek %d\n", srcdba.SrcName, srcdba.Name, tablename, seek)
 	}
 	rows.Close()
+	return seek, nil
+}
+
+func migrationStepInitMigrationLog(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, tablename string, db *sql.DB, columnNames []string, nodup bool) error {
+	fmt.Printf("* fresh start %s %s.%s from seek %d\n", srcdba.SrcName, srcdba.Name, tablename, 0)
+	// create migration log & potentially create temp primary key
+
+	tx0, err := db.Begin()
+	if err != nil {
+		return errors.New("failed creating tx0 when creating migration log: " + err.Error())
+	}
+
+	_, err = tx0.Exec("INSERT INTO meta_migration.migration_log (dbname,tablename,src,seek,temp_prikey) VALUES(?, ?, ?, 0, ?) ON DUPLICATE KEY UPDATE seek = 0;", srcdba.Name, tablename, srcdba.SrcName, 0 /* !hasUniqueIndex */)
+	if err != nil {
+		return errors.New("failed creating migration log: " + err.Error())
+	}
+
+	if !nodup { // if source data hasn't been deduped locally
+		/*
+			> 如果有主键或者非空唯一索引，唯一索引相同的情况下，以行updated_at时间戳来判断是否覆盖数据，如果updated_at比原来的数据更新，那么覆盖数据；否则忽略数据。不存在主键相同，updated_at时间戳相同，但数据不同的情况。
+			> 如果没有主键或者非空唯一索引，如果除updated_at其他数据都一样，只更新updated_at字段；否则，插入一条新的数据。
+			第二种情况，通过添加一个包括所有数据列，但不包括 updated_at 的临时主键，转换为第一种。
+		*/
+		checkAndCreatePKForDedup(tx0, srcdba, tablename, columnNames)
+	}
+
+	// commit change to migration log
+
+	err = tx0.Commit()
+	if err != nil {
+		return errors.New("failed committing tx0 when creating migration log: " + err.Error())
+	}
+	return nil
+}
+
+// migrate one table from a source database
+// nodup: true if the data source has already been deduped and there's no need to do that while migrating.
+func MigrateTable(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, tablename string, db *sql.DB, nodup bool) error {
+	println("* migrate table " + tablename + " from database " + srcdba.Name)
+
+	var err error
+
+	/// ======= preparation =======
+
+	// sort and merge the two tables from source a and b
+	err = srcdba.PresortTable(tablename)
+	if err != nil {
+		return err
+	}
+	err = srcdbb.PresortTable(tablename)
+	if err != nil {
+		return err
+	}
+	mergedCsvPath, err := srcreader.MergeSortedTable(srcdba, srcdbb, tablename)
+	if err != nil {
+		return err
+	}
+
+	temporarilySuppressKeyIdB, err := migrationStepCreateTable(srcdba, srcdbb, tablename, db)
+	if err != nil {
+		return err
+	}
+
+	columnNames, err := migrationStepDetectColumns(srcdba, srcdbb, tablename, db)
+	if err != nil {
+		return err
+	}
+
+	seek, err := migrationStepReadMigrationLog(srcdba, srcdbb, tablename, db)
+	if err != nil {
+		return err
+	}
 
 	if seek == -1 {
 		fmt.Printf("* %s %s.%s already finished.\n", srcdba.SrcName, srcdba.Name, tablename)
@@ -145,35 +206,13 @@ func MigrateTable(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, 
 	if seek == -2 { // first time migrating the table
 		seek = 0
 		isResumed = false
-		fmt.Printf("* fresh start %s %s.%s from seek %d\n", srcdba.SrcName, srcdba.Name, tablename, seek)
-		// create migration log & potentially create temp primary key
-
-		tx0, err := db.Begin()
+		err := migrationStepInitMigrationLog(srcdba, srcdbb, tablename, db, columnNames, nodup)
 		if err != nil {
-			return errors.New("failed creating tx0 when creating migration log: " + err.Error())
-		}
-
-		_, err = tx0.Exec("INSERT INTO meta_migration.migration_log (dbname,tablename,src,seek,temp_prikey) VALUES(?, ?, ?, 0, ?) ON DUPLICATE KEY UPDATE seek = 0;", srcdba.Name, tablename, srcdba.SrcName, 0 /* !hasUniqueIndex */)
-		if err != nil {
-			return errors.New("failed creating migration log: " + err.Error())
-		}
-
-		if !nodup { // if source data hasn't been deduped locally
-			/*
-				> 如果有主键或者非空唯一索引，唯一索引相同的情况下，以行updated_at时间戳来判断是否覆盖数据，如果updated_at比原来的数据更新，那么覆盖数据；否则忽略数据。不存在主键相同，updated_at时间戳相同，但数据不同的情况。
-				> 如果没有主键或者非空唯一索引，如果除updated_at其他数据都一样，只更新updated_at字段；否则，插入一条新的数据。
-				第二种情况，通过添加一个包括所有数据列，但不包括 updated_at 的临时主键，转换为第一种。
-			*/
-			checkAndCreatePKForDedup(tx0, srcdba, tablename, columnNames)
-		}
-
-		// commit change to migration log
-
-		err = tx0.Commit()
-		if err != nil {
-			return errors.New("failed committing tx0 when creating migration log: " + err.Error())
+			return err
 		}
 	}
+
+	/// ======= migration =======
 
 	csvfile, err := os.Open(mergedCsvPath)
 	if err != nil {
