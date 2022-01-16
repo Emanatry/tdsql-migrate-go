@@ -261,8 +261,10 @@ func MigrateTable(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, 
 
 		rowsAffected, _ := res.RowsAffected()
 
-		speed := float32(seek-lastSeek) / float32(time.Since(batchStartTime).Milliseconds()) * 1000 / 1024
-		fmt.Printf("batchok %s %s.%s, new seek = (%.2f%%) %d, rows = %d, %.2fKB/s (%.2fs)\n", srcdba.SrcName, srcdba.Name, tablename, float64(seek)/float64(csvsize)*100, seek, rowsAffected, speed, time.Since(batchStartTime).Seconds())
+		if !stats.DevSuppressLog {
+			speed := float32(seek-lastSeek) / float32(time.Since(batchStartTime).Milliseconds()) * 1000 / 1024
+			fmt.Printf("batchok %s %s.%s, new seek = (%.2f%%) %d, rows = %d, %.2fKB/s (%.2fs)\n", srcdba.SrcName, srcdba.Name, tablename, float64(seek)/float64(csvsize)*100, seek, rowsAffected, speed, time.Since(batchStartTime).Seconds())
+		}
 
 		totalTableRowCount += int(rowsAffected)
 		stats.ReportBytesMigrated(seek - lastSeek)

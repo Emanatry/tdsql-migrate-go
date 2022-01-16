@@ -11,6 +11,8 @@ import (
 	"time"
 )
 
+var DevSuppressLog bool
+
 var bytesMigratedSum int
 var lastTimeCalculated time.Time = time.Now()
 

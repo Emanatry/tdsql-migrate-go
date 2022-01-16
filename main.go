@@ -20,6 +20,7 @@ var dstIP *string
 var dstPort *int
 var dstUser *string
 var dstPassword *string
+var suppressLog *bool
 
 func main() {
 	// for distinguishing between different builds and logs
@@ -36,6 +37,7 @@ func main() {
 	dstPort = flag.Int("dst_port", 0, "port of dst database address")
 	dstUser = flag.String("dst_user", "", "user name of dst database")
 	dstPassword = flag.String("dst_password", "", "password of dst database")
+	suppressLog = flag.Bool("suppress_log", false, "do suppress dev logs")
 
 	flag.Parse()
 
@@ -44,6 +46,7 @@ func main() {
 	fmt.Printf("dst port:%v\n", *dstPort)
 	fmt.Printf("dst user:%v\n", *dstUser)
 	fmt.Printf("dst password:%v\n", *dstPassword)
+	stats.DevSuppressLog = *suppressLog
 
 	if (*dataPath)[len(*dataPath)-1:] != "/" {
 		*dataPath += "/"
