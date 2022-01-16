@@ -7,11 +7,13 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/Emanatry/tdsql-migrate-go/semaphore"
 	"github.com/Emanatry/tdsql-migrate-go/srcreader"
 )
 
 const BatchSize = 2000
 const CONCURRENT_MIGRATE_TABLES = 1
+const CONCURRENT_MIGRATE_DATABASES = 1
 
 // prepare the target instance, create `meta_migration`, etc.
 func PrepareTargetDB(db *sql.DB) {
@@ -57,16 +59,18 @@ func PrepareTargetDB(db *sql.DB) {
 // migrate a whole data source
 func MigrateSource(srca *srcreader.Source, srcb *srcreader.Source, db *sql.DB, nodup bool) error {
 	println("========== starting migration job for source " + srca.SrcName)
+	rateLimitingSemaphore := semaphore.New(CONCURRENT_MIGRATE_DATABASES)
 	var wg sync.WaitGroup
 	for i, dba := range srca.Databases {
 		wg.Add(1)
+		rateLimitingSemaphore.Acquire()
 		go func(dba *srcreader.SrcDatabase, i int) {
 			if err := MigrateDatabase(dba, srcb.Databases[i], db, nodup); err != nil {
 				panic(fmt.Errorf("error while migrating database [%s] from source %s:\n%s", dba.Name, dba.SrcName, err))
 			}
+			rateLimitingSemaphore.Release()
 			defer wg.Done()
 		}(dba, i)
-
 	}
 	wg.Wait()
 	return nil
