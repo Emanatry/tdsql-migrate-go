@@ -11,6 +11,7 @@ import (
 )
 
 const BatchSize = 2000
+const CONCURRENT_MIGRATE_TABLES = 1
 
 // prepare the target instance, create `meta_migration`, etc.
 func PrepareTargetDB(db *sql.DB) {
@@ -82,25 +83,18 @@ func MigrateDatabase(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabas
 		c <- nil
 	}
 	// shift these around to migrate multiple tables concurrently
-	go migrate(srcdba.Tables[0])
-	err := <-c
-	if err != nil {
-		return err
-	}
-	go migrate(srcdba.Tables[1])
-	err = <-c
-	if err != nil {
-		return err
-	}
-	go migrate(srcdba.Tables[2])
-	err = <-c
-	if err != nil {
-		return err
-	}
-	go migrate(srcdba.Tables[3])
-	err = <-c
-	if err != nil {
-		return err
+	concurrentTables := 0
+
+	for i := range srcdba.Tables {
+		go migrate(srcdba.Tables[i])
+		concurrentTables++
+		for concurrentTables >= CONCURRENT_MIGRATE_TABLES {
+			err := <-c
+			if err != nil {
+				return err
+			}
+			concurrentTables--
+		}
 	}
 	return nil
 }
