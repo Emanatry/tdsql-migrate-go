@@ -234,6 +234,10 @@ func MigrateTable(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, 
 
 	// sql statement in string form for a full BatchSize batch insert.
 	fullBatchInsertSqlStmtsStr := generateBatchInsertStmts(srcdba.Name, tablename, columnNames, BatchSize, nodup)
+	fullBatchInsertSqlStmts, err := db.Prepare(fullBatchInsertSqlStmtsStr)
+	if err != nil {
+		return errors.New("failed preparing insert statement: " + err.Error())
+	}
 
 	// batch insert
 	for {
@@ -275,7 +279,7 @@ func MigrateTable(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, 
 		}
 
 		if isFullBatch {
-			stmt, err = tx.Prepare(fullBatchInsertSqlStmtsStr)
+			stmt = tx.Stmt(fullBatchInsertSqlStmts)
 			if err != nil {
 				return errors.New("failed preparing insert statement: " + err.Error())
 			}
