@@ -57,15 +57,27 @@ func PrepareTargetDB(db *sql.DB) {
 }
 
 // migrate a whole data source
-func MigrateSource(srca *srcreader.Source, srcb *srcreader.Source, db *sql.DB, nodup bool) error {
+func MigrateSource(srca *srcreader.Source, srcb *srcreader.Source, db *sql.DB, doCreateTable bool) error {
 	println("========== starting migration job for source " + srca.SrcName)
+
+	if doCreateTable { // create all the tables for all the databases first
+		for _, srcdb := range srca.Databases {
+			for _, table := range srcdb.Tables {
+				err := createTable(srcdb, table, db)
+				if err != nil {
+					return err
+				}
+			}
+		}
+	}
+
 	rateLimitingSemaphore := semaphore.New(CONCURRENT_MIGRATE_DATABASES)
 	var wg sync.WaitGroup
 	for i, dba := range srca.Databases {
 		wg.Add(1)
 		rateLimitingSemaphore.Acquire()
 		go func(dba *srcreader.SrcDatabase, i int) {
-			if err := MigrateDatabase(dba, srcb.Databases[i], db, nodup); err != nil {
+			if err := MigrateDatabase(dba, srcb.Databases[i], db); err != nil {
 				panic(fmt.Errorf("error while migrating database [%s] from source %s:\n%s", dba.Name, dba.SrcName, err))
 			}
 			rateLimitingSemaphore.Release()
@@ -77,11 +89,11 @@ func MigrateSource(srca *srcreader.Source, srcb *srcreader.Source, db *sql.DB, n
 }
 
 // migrate one database of a data source
-func MigrateDatabase(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, db *sql.DB, nodup bool) error {
+func MigrateDatabase(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, db *sql.DB) error {
 	println("======= migrate database [" + srcdba.Name + "]")
 	c := make(chan error)
 	migrate := func(table string) {
-		if err := MigrateTable(srcdba, srcdbb, table, db, nodup); err != nil {
+		if err := MigrateTable(srcdba, srcdbb, table, db); err != nil {
 			c <- fmt.Errorf("error while migrating table [%s]:\n%s", table, err)
 		}
 		c <- nil

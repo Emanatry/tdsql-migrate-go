@@ -111,15 +111,19 @@ var mutexMapLock sync.Mutex
 func MergeSortedTable(dba *SrcDatabase, dbb *SrcDatabase, table string) (csvpath string, err error) {
 	dbroot := PRESORT_PATH + "merged" + "/" + dba.Name
 	mergeOutputFile := dbroot + "/" + table + ".csv"
+	var mergeLock *sync.Mutex
 
 	mutexMapLock.Lock()
-	if mergeMutexMap[mergeOutputFile] == nil {
-		mergeMutexMap[mergeOutputFile] = &sync.Mutex{}
+	if lock, ok := mergeMutexMap[mergeOutputFile]; !ok {
+		mergeLock = &sync.Mutex{}
+		mergeMutexMap[mergeOutputFile] = mergeLock
+	} else {
+		mergeLock = lock
 	}
 	mutexMapLock.Unlock()
 
-	mergeMutexMap[mergeOutputFile].Lock()
-	defer mergeMutexMap[mergeOutputFile].Unlock()
+	mergeLock.Lock()
+	defer mergeLock.Unlock()
 
 	err = os.MkdirAll(dbroot, 0755)
 	if err != nil {

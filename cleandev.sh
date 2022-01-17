@@ -2,3 +2,4 @@
 rm -rf migration_inprogress.txt
 rm -rf ./presort/data
 rm -rf ./run
+rm -rf ./migration_log
