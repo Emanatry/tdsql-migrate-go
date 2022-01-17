@@ -12,8 +12,8 @@ import (
 )
 
 const BatchSize = 2000
-const CONCURRENT_MIGRATE_TABLES = 1
 const CONCURRENT_MIGRATE_DATABASES = 7
+const CONCURRENT_MIGRATE_TABLES = 1
 
 // prepare the target instance, create `meta_migration`, etc.
 func PrepareTargetDB(db *sql.DB) {

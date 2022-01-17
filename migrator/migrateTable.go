@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -271,9 +272,29 @@ func MigrateTable(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, 
 				return fmt.Errorf("failed reading csv from seek pos %d: %s", seek, err.Error())
 			}
 			totalLines++
-			data := strings.Split(string(line), ",")
+			data := strings.Split(strings.TrimSpace(string(line)), ",")
 			for i := 0; i < len(columnNames); i++ {
-				batchData = append(batchData, data[i])
+				// convert input data into their corresponding native types
+				var converted interface{}
+				var err error
+				switch i {
+				case 0: // bigint unsigned
+					converted, err = strconv.ParseUint(data[i], 10, 64)
+				case 1: // float/double
+					// always treat it as 64-bit, despite having both float and double as input data.
+					converted, err = strconv.ParseFloat(data[i], 64)
+				case 2: // char(32)
+					// it actually costs more to transmit binary and UNHEX it at the other end
+					// so here we just transmit the raw string data
+					converted, err = data[i], nil
+				case 3: // datetime
+					converted, err = time.ParseInLocation("2006-01-02 15:04:05", data[i], time.Local)
+				}
+				if err != nil {
+					return fmt.Errorf("failed converting input data [%s]: %s", data[i], err)
+				}
+				// fmt.Printf("[%+v]\n", converted)
+				batchData = append(batchData, converted)
 			}
 			seek += len(line)
 		}
