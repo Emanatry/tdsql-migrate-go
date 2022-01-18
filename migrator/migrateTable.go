@@ -109,10 +109,21 @@ func migrationStepInitMigrationLog(srcdba *srcreader.SrcDatabase, srcdbb *srcrea
 
 // migrate one table from a source database
 // nodup: true if the data source has already been deduped and there's no need to do that while migrating.
-func MigrateTable(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, tablename string, db *sql.DB) error {
+func MigrateTable(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, tablename string, DSN string) error {
 	println("* migrate table " + tablename + " from database " + srcdba.Name)
-
 	var err error
+
+	// create a dedicated sql.DB for every single table, bypassing the sql connection pool
+	db, err := sql.Open("mysql", DSN)
+	if err != nil {
+		panic(err)
+	}
+
+	db.SetConnMaxIdleTime(-1)
+	db.SetConnMaxLifetime(-1)
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	db.Ping()
 
 	sqlfile, err := srcdba.ReadSQL(tablename)
 	if err != nil {
@@ -192,12 +203,13 @@ func MigrateTable(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, 
 	lastSeek := seek
 
 	// sql statement in string form for a full BatchSize batch insert.
-	fullBatchInsertSqlStmtsStr := generateBatchInsertStmts(srcdba.Name, tablename, columnNames, BatchSize)
+	fullBatchInsertSqlStmtsStr := generateBatchInsertStmts(srcdba.Name, tablename, columnNames, BATCH_SIZE)
 	fullBatchInsertSqlStmts, err := db.Prepare(fullBatchInsertSqlStmtsStr)
 	if err != nil {
 		return errors.New("failed preparing insert statement: " + err.Error())
 	}
 
+	batchCounter := 0
 	// batch insert
 	for {
 		batchStartTime := time.Now()
@@ -207,7 +219,7 @@ func MigrateTable(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, 
 		var stmt *sql.Stmt
 		isFullBatch := true
 		var batchData []interface{}
-		for rowCount := 0; rowCount < BatchSize; rowCount++ {
+		for rowCount := 0; rowCount < BATCH_SIZE; rowCount++ {
 			line, err := csv.ReadBytes('\n')
 			if err == io.EOF {
 				// table finished, part of the last batch
@@ -268,10 +280,17 @@ func MigrateTable(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, 
 			stmt.Close() // failing to close this will lead to a connection leak
 		}
 
-		// update migration log at the end of each batch
-		err = writeSeekMigrationLog(srcdba.SrcName, srcdba.Name, tablename, seek)
-		if err != nil {
-			return fmt.Errorf("failed updating migration log for source %s %s.%s, new seek = %d: %s", srcdba.SrcName, srcdba.Name, tablename, seek, err.Error())
+		batchCounter++
+		if batchCounter >= COMMIT_INTERVAL || seek == -1 {
+			batchCounter = 0
+			_, err = db.Exec("COMMIT")
+			if err != nil {
+				return errors.New("failed commiting batches: " + err.Error())
+			}
+			err = writeSeekMigrationLog(srcdba.SrcName, srcdba.Name, tablename, seek)
+			if err != nil {
+				return fmt.Errorf("failed updating migration log for source %s %s.%s, new seek = %d: %s", srcdba.SrcName, srcdba.Name, tablename, seek, err.Error())
+			}
 		}
 
 		rowsAffected, _ := res.RowsAffected()
@@ -307,7 +326,15 @@ func MigrateTable(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, 
 		}
 	}
 
+	// commit again, just to be safe
+	_, err = db.Exec("COMMIT")
+	if err != nil {
+		return errors.New("failed commiting last batches: " + err.Error())
+	}
+
 	fullBatchInsertSqlStmts.Close()
+
+	db.Close()
 
 	fmt.Printf("* finished table db %s table %s, totalRowAffected %d, csvlines: %d (resumed: %v)\n", srcdba.Name, tablename, totalTableRowCount, totalLines, isResumed)
 

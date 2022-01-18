@@ -11,9 +11,10 @@ import (
 	"github.com/Emanatry/tdsql-migrate-go/srcreader"
 )
 
-const BatchSize = 2000
+const BATCH_SIZE = 2000
 const CONCURRENT_MIGRATE_DATABASES = 7
 const CONCURRENT_MIGRATE_TABLES = 1
+const COMMIT_INTERVAL = 40
 
 // prepare the target instance, create `meta_migration`, etc.
 func PrepareTargetDB(db *sql.DB) {
@@ -57,7 +58,7 @@ func PrepareTargetDB(db *sql.DB) {
 }
 
 // migrate a whole data source
-func MigrateSource(srca *srcreader.Source, srcb *srcreader.Source, db *sql.DB, doCreateTable bool) error {
+func MigrateSource(srca *srcreader.Source, srcb *srcreader.Source, db *sql.DB, DSN string, doCreateTable bool) error {
 	println("========== starting migration job for source " + srca.SrcName)
 
 	if doCreateTable { // create all the tables for all the databases first
@@ -77,7 +78,7 @@ func MigrateSource(srca *srcreader.Source, srcb *srcreader.Source, db *sql.DB, d
 		wg.Add(1)
 		rateLimitingSemaphore.Acquire()
 		go func(dba *srcreader.SrcDatabase, i int) {
-			if err := MigrateDatabase(dba, srcb.Databases[i], db); err != nil {
+			if err := MigrateDatabase(dba, srcb.Databases[i], DSN); err != nil {
 				panic(fmt.Errorf("error while migrating database [%s] from source %s:\n%s", dba.Name, dba.SrcName, err))
 			}
 			rateLimitingSemaphore.Release()
@@ -89,11 +90,11 @@ func MigrateSource(srca *srcreader.Source, srcb *srcreader.Source, db *sql.DB, d
 }
 
 // migrate one database of a data source
-func MigrateDatabase(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, db *sql.DB) error {
+func MigrateDatabase(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, DSN string) error {
 	println("======= migrate database [" + srcdba.Name + "]")
 	c := make(chan error)
 	migrate := func(table string) {
-		if err := MigrateTable(srcdba, srcdbb, table, db); err != nil {
+		if err := MigrateTable(srcdba, srcdbb, table, DSN); err != nil {
 			c <- fmt.Errorf("error while migrating table [%s]:\n%s", table, err)
 		}
 		c <- nil

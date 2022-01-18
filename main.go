@@ -149,7 +149,7 @@ func main() {
 	println("\n======== starting backgound presort & merge ========")
 	srcreader.StartBackgoundPresortMerge(srca, srcb)
 
-	if err := migrator.MigrateSource(srca, srcb, db, doCreateTable); err != nil {
+	if err := migrator.MigrateSource(srca, srcb, db, DSN, doCreateTable); err != nil {
 		panic(err)
 	}
 
