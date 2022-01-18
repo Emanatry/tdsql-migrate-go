@@ -288,9 +288,16 @@ func MigrateTable(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, 
 
 		if seek == -1 {
 			if temporarilySuppressKeyIdB { // add back KEY(`id`,`b`)
-				fmt.Printf("* adding back temporarilySuppressKeyIdB for %s.%s\n", srcdba.Name, tablename)
+				fmt.Printf("* adding back key id_b for %s.%s\n", srcdba.Name, tablename)
 				t1 := time.Now()
-				_, err = db.Exec(fmt.Sprintf("ALTER TABLE `%s`.`%s` ADD INDEX (`id`,`b`);", srcdba.Name, tablename))
+				var err error = nil
+				for err == nil || strings.Contains(err.Error(), "Lock wait timeout exceeded") {
+					_, err = db.Exec(fmt.Sprintf("ALTER TABLE `%s`.`%s` ADD INDEX (`id`,`b`);", srcdba.Name, tablename))
+					if err == nil {
+						break
+					}
+					fmt.Println("retry......")
+				}
 				if err != nil {
 					return errors.New("failed adding back KEY(`id`,`b`): " + err.Error())
 				}
