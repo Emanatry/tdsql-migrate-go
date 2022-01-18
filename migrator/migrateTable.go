@@ -71,6 +71,8 @@ func createTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB) err
 			return errors.New("failed creating database and table: executing\n" + stmt + "\nerror:" + err.Error())
 		}
 	}
+
+	tx0.Commit()
 	return nil
 }
 
@@ -192,11 +194,19 @@ func MigrateTable(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, 
 	lastSeek := seek
 
 	// sql statement in string form for a full BatchSize batch insert.
-	fullBatchInsertSqlStmtsStr := generateBatchInsertStmts(srcdba.Name, tablename, columnNames, BatchSize)
+	fullBatchInsertSqlStmtsStr := generateBatchInsertStmts(srcdba.Name, tablename, columnNames, BATCH_SIZE)
 	fullBatchInsertSqlStmts, err := db.Prepare(fullBatchInsertSqlStmtsStr)
 	if err != nil {
 		return errors.New("failed preparing insert statement: " + err.Error())
 	}
+
+	batchCounter := 0
+
+	tx0, err := db.Begin()
+	if err != nil {
+		return errors.New("failed creating initial tx0 for batch insert: " + err.Error())
+	}
+	txstmt := tx0.Stmt(fullBatchInsertSqlStmts)
 
 	// batch insert
 	for {
@@ -204,21 +214,18 @@ func MigrateTable(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, 
 		// create a transaction for this batch of data
 
 		// generate the batch insert sql statement
-		var stmt *sql.Stmt
-		isFullBatch := true
 		var batchData []interface{}
-		for rowCount := 0; rowCount < BatchSize; rowCount++ {
+		for rowCount := 0; rowCount < BATCH_SIZE; rowCount++ {
 			line, err := csv.ReadBytes('\n')
 			if err == io.EOF {
 				// table finished, part of the last batch
 
 				// prepare a shorter batch insert statement just for the last batch
-				stmt, err = db.Prepare(generateBatchInsertStmts(srcdba.Name, tablename, columnNames, rowCount))
+				txstmt, err = tx0.Prepare(generateBatchInsertStmts(srcdba.Name, tablename, columnNames, rowCount))
 				if err != nil {
 					return errors.New("failed preparing insert statement: " + err.Error())
 				}
 
-				isFullBatch = false
 				seek = -1
 				break
 			}
@@ -253,25 +260,29 @@ func MigrateTable(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, 
 			seek += len(line)
 		}
 
-		if isFullBatch {
-			stmt = fullBatchInsertSqlStmts
-			if err != nil {
-				return errors.New("failed preparing insert statement: " + err.Error())
-			}
-		}
-
-		res, err := stmt.Exec(batchData...) // insert one batch of data
+		res, err := txstmt.Exec(batchData...) // insert one batch of data
 		if err != nil {
 			return fmt.Errorf("failed exec batch seek %d source %s %s.%s: %s", seek, srcdba.SrcName, srcdba.Name, tablename, err.Error())
 		}
-		if !isFullBatch {
-			stmt.Close() // failing to close this will lead to a connection leak
-		}
 
-		// update migration log at the end of each batch
-		err = writeSeekMigrationLog(srcdba.SrcName, srcdba.Name, tablename, seek)
-		if err != nil {
-			return fmt.Errorf("failed updating migration log for source %s %s.%s, new seek = %d: %s", srcdba.SrcName, srcdba.Name, tablename, seek, err.Error())
+		batchCounter++
+		if batchCounter >= COMMIT_INTERVAL {
+			batchCounter = 0
+			err := tx0.Commit()
+			if err != nil {
+				return fmt.Errorf("failed committing tx0 for %s.%s: %s", srcdba.Name, tablename, err.Error())
+			}
+			fmt.Printf("committing %s.%s\n", srcdba.Name, tablename)
+			err = writeSeekMigrationLog(srcdba.SrcName, srcdba.Name, tablename, seek)
+			if err != nil {
+				return fmt.Errorf("failed updating migration log for source %s %s.%s, new seek = %d: %s", srcdba.SrcName, srcdba.Name, tablename, seek, err.Error())
+			}
+
+			tx0, err = db.Begin()
+			if err != nil {
+				return errors.New("failed creating new tx0 for batch insert: " + err.Error())
+			}
+			txstmt = tx0.Stmt(fullBatchInsertSqlStmts)
 		}
 
 		rowsAffected, _ := res.RowsAffected()
@@ -305,6 +316,11 @@ func MigrateTable(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, 
 			}
 			break
 		}
+	}
+
+	err = tx0.Commit()
+	if err != nil {
+		return fmt.Errorf("failed committing last tx0 for %s.%s: %s", srcdba.Name, tablename, err.Error())
 	}
 
 	fullBatchInsertSqlStmts.Close()

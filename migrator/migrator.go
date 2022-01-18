@@ -11,9 +11,12 @@ import (
 	"github.com/Emanatry/tdsql-migrate-go/srcreader"
 )
 
-const BatchSize = 2000
+const BATCH_SIZE = 2000
 const CONCURRENT_MIGRATE_DATABASES = 7
 const CONCURRENT_MIGRATE_TABLES = 1
+
+// how many batches can happen before a `COMMIT` should be executed (assuming auto_commit=off)
+const COMMIT_INTERVAL = 100
 
 // prepare the target instance, create `meta_migration`, etc.
 func PrepareTargetDB(db *sql.DB) {
