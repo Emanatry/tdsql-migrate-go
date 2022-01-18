@@ -51,9 +51,9 @@ func createTable(srcdb *srcreader.SrcDatabase, tablename string, db *sql.DB) err
 	}
 	// another dirty hack to add shard key (tdsql only)
 	if !bytes.Contains(sqlfile, []byte("PRIMARY KEY")) { // must have primary key to use shard key
-		fmt.Printf("* adding primary key(id,a,b) to %s.%s\n", srcdb.Name, tablename)
+		fmt.Printf("* adding primary key(id,b,a) to %s.%s\n", srcdb.Name, tablename)
 		idx := bytes.Index(sqlfile, []byte(") ENGINE=InnoDB DEFAULT CHARSET=utf8"))
-		sqlfile = bytes.Join([][]byte{sqlfile[:idx], []byte(",\n  PRIMARY KEY(`id`,`a`,`b`)\n"), sqlfile[idx:]}, []byte{})
+		sqlfile = bytes.Join([][]byte{sqlfile[:idx], []byte(",\n  PRIMARY KEY(`id`,`b`,`a`)\n"), sqlfile[idx:]}, []byte{})
 	}
 	sqlfile = append(sqlfile, " shardkey=id"...)
 
