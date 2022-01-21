@@ -12,11 +12,10 @@ import (
 )
 
 const PRESORT_PATH = "./presort/data/"
-const SORTER_PROGRAM = "./presort/sortdata"
-const MERGER_PROGRAM = "./presort/merge"
+const SORTMERGER_PROGRAM = "./presort/sortmerge"
 
 // limit the total amout of concurrent presort job to avoid OOM.
-const CONCURRENT_PRESORT_JOB = 7
+const CONCURRENT_PRESORT_JOB = 5
 
 func (d *SrcDatabase) determinePKColumnType(table string) (string, error) {
 	sql, err := d.ReadSQL(table)
@@ -41,8 +40,8 @@ func (db *SrcDatabase) getPresortMarkFile(table string) string {
 	return PRESORT_PATH + db.SrcName + "/" + db.Name + "/" + table + ".presorted"
 }
 
-func (db *SrcDatabase) getPresortOutputFile(table string) string {
-	return PRESORT_PATH + db.SrcName + "/" + db.Name + "/" + table + ".csv"
+func (db *SrcDatabase) getTableDataFilePath(table string) string {
+	return db.srcdbpath + "/" + table + ".csv"
 }
 
 func (d *SrcDatabase) IsTablePresorted(table string) bool {
@@ -64,63 +63,33 @@ func (db *SrcDatabase) getTableIndex(table string) int {
 }
 
 var rateLimitSem = semaphore.New(CONCURRENT_PRESORT_JOB)
+var sortMergeMutexMap = make(map[string]*sync.Mutex)
+var sortMergeMutexMapLock sync.Mutex
 
-func (db *SrcDatabase) PresortTable(table string) error {
-	tableIndex := db.getTableIndex(table)
+func PresortAndMergeTable(dba *SrcDatabase, dbb *SrcDatabase, table string) (csvpath string, err error) {
+	tableIndex := dba.getTableIndex(table)
 
-	db.presortLock[tableIndex].Lock()
-	defer db.presortLock[tableIndex].Unlock()
+	dbroot := PRESORT_PATH + "merged" + "/" + dba.Name
+	mergeOutputFile := dbroot + "/" + table + ".csv"
 
 	rateLimitSem.Acquire()
 	defer rateLimitSem.Release()
 
-	if db.tablePresorted[tableIndex] {
-		return nil
-	}
-	err := os.MkdirAll(PRESORT_PATH+db.SrcName+"/"+db.Name, 0755)
-	if err != nil {
-		return err
-	}
-
-	coltype, err := db.determinePKColumnType(table)
-	if err != nil {
-		return err
-	}
-	fmt.Printf("@ presorting %s %s.%s (%s)\n", db.SrcName, db.Name, table, coltype)
-	// presort files by running c++ sorting program
-	cmd := exec.Command(SORTER_PROGRAM, db.srcdbpath+"/"+table+".csv", db.getPresortOutputFile(table), coltype)
-	err = cmd.Run()
-	if err != nil {
-		return err
-	}
-
-	// create mark file for presorted tables
-	f, err := os.Create(db.getPresortMarkFile(table))
-	if err != nil {
-		return err
-	}
-	f.Close()
-
-	db.tablePresorted[tableIndex] = true
-	return nil
-}
-
-var mergeMutexMap = make(map[string]*sync.Mutex)
-var mutexMapLock sync.Mutex
-
-func MergeSortedTable(dba *SrcDatabase, dbb *SrcDatabase, table string) (csvpath string, err error) {
-	dbroot := PRESORT_PATH + "merged" + "/" + dba.Name
-	mergeOutputFile := dbroot + "/" + table + ".csv"
 	var mergeLock *sync.Mutex
-
-	mutexMapLock.Lock()
-	if lock, ok := mergeMutexMap[mergeOutputFile]; !ok {
+	sortMergeMutexMapLock.Lock()
+	if lock, ok := sortMergeMutexMap[mergeOutputFile]; !ok {
 		mergeLock = &sync.Mutex{}
-		mergeMutexMap[mergeOutputFile] = mergeLock
+		sortMergeMutexMap[mergeOutputFile] = mergeLock
 	} else {
 		mergeLock = lock
 	}
-	mutexMapLock.Unlock()
+	sortMergeMutexMapLock.Unlock()
+
+	// this is messy... presort and merging used to be two individual steps
+	// we decided to combine them together (for reduced io time) at the last minute.
+	if dba.tablePresorted[tableIndex] && dbb.tablePresorted[tableIndex] {
+		return mergeOutputFile, nil
+	}
 
 	mergeLock.Lock()
 	defer mergeLock.Unlock()
@@ -138,7 +107,7 @@ func MergeSortedTable(dba *SrcDatabase, dbb *SrcDatabase, table string) (csvpath
 	if err != nil {
 		return "", err
 	}
-	fmt.Printf("@ merging %s.%s (%s)\n", dba.Name, table, coltype)
+	fmt.Printf("@ presorting & merging %s.%s (%s)\n", dba.Name, table, coltype)
 	sql, err := dba.ReadSQL(table)
 	if err != nil {
 		return "", err
@@ -147,7 +116,7 @@ func MergeSortedTable(dba *SrcDatabase, dbb *SrcDatabase, table string) (csvpath
 	if err != nil {
 		return "", err
 	}
-	cmd := exec.Command(MERGER_PROGRAM, dba.getPresortOutputFile(table), dbb.getPresortOutputFile(table), mergeOutputFile, coltype)
+	cmd := exec.Command(SORTMERGER_PROGRAM, dba.getTableDataFilePath(table), dbb.getTableDataFilePath(table), mergeOutputFile, coltype)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return "", err
@@ -169,6 +138,10 @@ func MergeSortedTable(dba *SrcDatabase, dbb *SrcDatabase, table string) (csvpath
 		return "", err
 	}
 	f.Close()
+
+	dba.tablePresorted[tableIndex] = true
+	dbb.tablePresorted[tableIndex] = true
+
 	return mergeOutputFile, err
 }
 
@@ -177,15 +150,7 @@ func StartBackgoundPresortMerge(srca *Source, srcb *Source) {
 		sortAndMergeTable := func(table string) {
 			for i, dba := range srca.Databases {
 				dbb := srcb.Databases[i]
-				err := dba.PresortTable(table)
-				if err != nil {
-					panic(err)
-				}
-				err = dbb.PresortTable(table)
-				if err != nil {
-					panic(err)
-				}
-				_, err = MergeSortedTable(dba, dbb, table)
+				_, err := PresortAndMergeTable(dba, dbb, table)
 				if err != nil {
 					panic(err)
 				}

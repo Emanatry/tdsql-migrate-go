@@ -140,15 +140,7 @@ func MigrateTable(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, 
 	/// ======= preparation =======
 
 	// sort and merge the two tables from source a and b
-	err = srcdba.PresortTable(tablename)
-	if err != nil {
-		return err
-	}
-	err = srcdbb.PresortTable(tablename)
-	if err != nil {
-		return err
-	}
-	mergedCsvPath, err := srcreader.MergeSortedTable(srcdba, srcdbb, tablename)
+	mergedCsvPath, err := srcreader.PresortAndMergeTable(srcdba, srcdbb, tablename)
 	if err != nil {
 		return err
 	}

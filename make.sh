@@ -12,6 +12,5 @@ echo ======LABEL OF THIS BUILD======
 cat label.txt
 echo ===============================
 # go run ./preflight/preflight.go
-g++ -O2 ./presort/sortdata.cpp -o ./presort/sortdata
-g++ -O2 ./presort/merge.cpp -o ./presort/merge
+g++ -O2 ./presort/sortmerge.cpp -o ./presort/sortmerge
 go build -o run main.go
