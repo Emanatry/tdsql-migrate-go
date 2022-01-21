@@ -9,24 +9,8 @@ bool id_b_a_pk = false;
 #define MAXROWS 2*3340000 // slightly bigger than the actual data set
 
 dat dats[MAXROWS];
-int ndat;
+int ndat = 0;
 
-bool comp(const dat &a, const dat &b) {
-	if(a.key == b.key) {
-		if(dual_column_pk) {
-			return strcmp(COL(a.data, 1), COL(b.data, 1)) < 0; // compare column `a`
-		} else if (triple_column_pk) {
-			int cmpres = strcmp(COL(a.data, 1), COL(b.data, 1)); // compare `a`
-			if(cmpres != 0) return cmpres < 0;
-			return strcmp(COL(a.data, 2), COL(b.data, 2)) < 0; // compare `b`
-		} else if (id_b_a_pk) {
-			int cmpres = strcmp(COL(a.data, 2), COL(b.data, 2)); // compare `b`
-			if(cmpres != 0) return cmpres < 0;
-			return strcmp(COL(a.data, 1), COL(b.data, 1)) < 0; // compare `a`
-		}
-	}
-	return a.key < b.key;
-}
 int comparePK(const dat &a, const dat &b) {
 	if(a.key == b.key){
 		if(dual_column_pk) {
@@ -45,6 +29,13 @@ int comparePK(const dat &a, const dat &b) {
 	}
 	return a.key - b.key;
 }
+
+bool comp(const dat &a, const dat &b) {
+	int compPkResult = comparePK(a, b);
+	if(compPkResult != 0) return compPkResult < 0;
+	return strcmp(COL(b.data, 3), COL(a.data, 3)) < 0; // if primary keys are equal, sort by `updated_at`
+}
+
 int main(int argc, char** argv) {
 	if(argc < 5) {
 		printf("usage: ./%s input1.csv input2.csv output.csv <id|id_a|id_a_b|id_b_a>\n", argv[0]);
@@ -79,16 +70,14 @@ int main(int argc, char** argv) {
 	std::sort(dats, dats+ndat, comp);
 	gettimeofday(&t3, NULL); // write back
     writeline(f, dats[0].data);
-	for(int i=0;i<ndat;i++) {
+	for(int i=1;i<ndat;i++) {
 		char *buf = dats[i].data;
-        //writeline(f, buf);
 		if(i>0&&comparePK(dats[i],dats[i-1])!=0)writeline(f, buf);
-		//fprintf(f, "%s,%s,%s,%s\n", COL(buf, 0), COL(buf, 1), COL(buf, 2), COL(buf, 3));
 	}
 	fflush(f);
 	fclose(f);
 	fclose(r1);
 	fclose(r2);
 	gettimeofday(&t4, NULL);
-	printf("out: %s\nread: %dms\nsort: %dms\nwrite: %dms\n", outputFile, diffms(t2, t1), diffms(t3, t2), diffms(t4, t3));
+	printf("out: %s (ndat=%d)\nread: %dms\nsort: %dms\nwrite: %dms\n", outputFile, ndat, diffms(t2, t1), diffms(t3, t2), diffms(t4, t3));
 }
