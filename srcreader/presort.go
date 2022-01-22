@@ -156,6 +156,7 @@ func StartBackgoundPresortMerge(srca *Source, srcb *Source) {
 				}
 			}
 		}
+		sortAndMergeTable("1")
 		sortAndMergeTable("2")
 		sortAndMergeTable("3")
 		sortAndMergeTable("4")
