@@ -14,6 +14,7 @@ import (
 var DevSuppressLog bool
 
 var bytesMigratedSum int
+var numCommitSum int
 var lastTimeCalculated time.Time = time.Now()
 
 var statlock sync.Mutex
@@ -24,6 +25,12 @@ func ReportBytesMigrated(bytesMigrated int) {
 	}
 	statlock.Lock()
 	bytesMigratedSum += bytesMigrated
+	statlock.Unlock()
+}
+
+func ReportCommit() {
+	statlock.Lock()
+	numCommitSum++
 	statlock.Unlock()
 }
 
@@ -90,14 +97,16 @@ func StartStatsReportingGoroutine(db *sql.DB) *bool {
 			runtime.ReadMemStats(&m)
 
 			_, free, available := getMemStats()
-			fmt.Printf("@stats: %v, idle: %d, inUse: %d, open: %d, waitDuration(s): %d, aggSpeed(KB/s): %.2f, cpu(%%): %.2f, heap(MB): %d, memFree(MB): %d, memAvail(MB): %d\n",
+			fmt.Printf("@stats: %v, idle: %d, inUse: %d, open: %d, waitDuration(s): %d, aggSpeed(KB/s): %.2f, cpu(%%): %.2f, heap(MB): %d, memFree(MB): %d, memAvail(MB): %d, nCommit: %d\n",
 				time.Now().Format(time.RFC3339), stat.Idle, stat.InUse, stat.OpenConnections, int(stat.WaitDuration.Seconds()), CalculateAggregateSpeedSinceLast(),
 				(1-float64(idle-lastIdle)/float64(total-lastTotal))*100,
 				m.HeapAlloc/1024/1024,
 				free/1204,
 				available/1024,
+				numCommitSum,
 			)
 
+			numCommitSum = 0
 			lastIdle = idle
 			lastTotal = total
 			time.Sleep(5 * time.Second)

@@ -279,6 +279,7 @@ func MigrateTable(srcdba *srcreader.SrcDatabase, srcdbb *srcreader.SrcDatabase, 
 			if err != nil {
 				return errors.New("failed commiting batches: " + err.Error())
 			}
+			stats.ReportCommit()
 			err = writeSeekMigrationLog(srcdba.SrcName, srcdba.Name, tablename, seek)
 			if err != nil {
 				return fmt.Errorf("failed updating migration log for source %s %s.%s, new seek = %d: %s", srcdba.SrcName, srcdba.Name, tablename, seek, err.Error())
